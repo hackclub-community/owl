@@ -7,6 +7,7 @@ import {
   pgEnum,
   uniqueIndex,
   check,
+  primaryKey,
 } from "drizzle-orm/pg-core";
 import type { RichTextBlock } from "@slack/web-api";
 import { sql } from "drizzle-orm";
@@ -44,4 +45,15 @@ export const confessions = pgTable(
       sql`(${table.replyKeyHash} IS NOT NULL AND ${table.authorSalt} IS NULL AND ${table.authorHash} IS NULL) OR (${table.replyKeyHash} IS NULL AND ${table.authorSalt} IS NOT NULL AND ${table.authorHash} IS NOT NULL) OR ${table.status} = 'rejected'`,
     ),
   ],
+);
+export const replies = pgTable(
+  "replies",
+  {
+    confessionId: integer("confession_id")
+      .notNull()
+      .references(() => confessions.id),
+    ts: text("ts").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.confessionId, table.ts] })],
 );

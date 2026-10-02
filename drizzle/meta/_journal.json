@@ -43,6 +43,13 @@
       "when": 1790819463851,
       "tag": "0005_light_nomad",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790964953227,
+      "tag": "0006_narrow_la_nuit",
+      "breakpoints": true
     }
   ]
 }

@@ -3,7 +3,7 @@ import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import type { WebClient } from "@slack/web-api";
 import type { Config } from "../config.js";
 import type { Database } from "../db/client.js";
-import { confessions } from "../db/schema.js";
+import { confessions, replies } from "../db/schema.js";
 import { authorCredential, hashReplyKey, newReplyKey, ownsPost } from "./security.js";
 import { registerDmHandlers } from "./dm.js";
 import {
@@ -53,6 +53,25 @@ export function registerHandlers(app: App, db: Database, config: Config) {
         eq(confessions.status, "accepted"),
       ),
     });
+  async function unpublish(
+    post: typeof confessions.$inferSelect,
+    client: WebClient,
+    tx: Pick<Database, "select" | "delete"> = db,
+  ) {
+    const rows = await tx
+      .select({ ts: replies.ts })
+      .from(replies)
+      .where(eq(replies.confessionId, post.id));
+    for (const ts of [...rows.map((row) => row.ts), post.contentTs, post.postTs]) {
+      if (!ts) continue;
+      try {
+        await client.chat.delete({ channel: post.postChannel, ts });
+      } catch (error) {
+        if (!slackError(error, "message_not_found")) throw error;
+      }
+    }
+    await tx.delete(replies).where(eq(replies.confessionId, post.id));
+  }
   async function withdraw(id: number, userId: string, key: string, client: WebClient) {
     const post = await db.query.confessions.findFirst({ where: eq(confessions.id, id) });
     if (!post || !ownsPost(post, userId, key)) return false;
@@ -67,14 +86,7 @@ export function registerHandlers(app: App, db: Database, config: Config) {
       )
       .returning();
     if (!claimed) return false;
-    for (const ts of [claimed.contentTs, claimed.postTs]) {
-      if (!ts) continue;
-      try {
-        await client.chat.delete({ channel: claimed.postChannel, ts });
-      } catch (error) {
-        if (!slackError(error, "message_not_found")) throw error;
-      }
-    }
+    await unpublish(claimed, client);
     await db.update(confessions).set(cleared()).where(eq(confessions.id, id));
     await Promise.all(
       claimed.reviewTs
@@ -610,14 +622,7 @@ export function registerHandlers(app: App, db: Database, config: Config) {
             return;
           if (post.status === "accepted") {
             if (!post.postTs) throw new Error("No publication timestamp");
-            for (const ts of [post.contentTs, post.postTs]) {
-              if (!ts) continue;
-              try {
-                await client.chat.delete({ channel: post.postChannel, ts });
-              } catch (error) {
-                if (!slackError(error, "message_not_found")) throw error;
-              }
-            }
+            await unpublish(post, client, tx);
           }
           await tx
             .update(confessions)
@@ -717,8 +722,9 @@ export function registerHandlers(app: App, db: Database, config: Config) {
       return;
     }
     await ack();
+    let ts: string | undefined;
     try {
-      await client.chat.postMessage({
+      ({ ts } = await client.chat.postMessage({
         channel: confession.postChannel,
         thread_ts: confession.postTs!,
         text: escapeSlackText(content.text),
@@ -728,8 +734,29 @@ export function registerHandlers(app: App, db: Database, config: Config) {
         blocks: contentBlocks(content),
         unfurl_links: false,
         unfurl_media: false,
+      }));
+      if (!ts) throw new Error("Slack returned no reply timestamp");
+      // lock the post so a concurrent unapprove/withdraw either sees this reply or we drop it
+      const kept = await db.transaction(async (tx) => {
+        const [current] = await tx
+          .select({ id: confessions.id })
+          .from(confessions)
+          .where(
+            and(
+              eq(confessions.id, confession.id),
+              eq(confessions.status, "accepted"),
+              eq(confessions.postTs, confession.postTs!),
+            ),
+          )
+          .for("share");
+        if (!current) return false;
+        await tx.insert(replies).values({ confessionId: confession.id, ts: ts! });
+        return true;
       });
+      if (!kept) await client.chat.delete({ channel: confession.postChannel, ts });
     } catch {
+      // an untracked reply could never be cleaned up, so drop it
+      if (ts) await client.chat.delete({ channel: confession.postChannel, ts }).catch(() => {});
       await client.chat.postEphemeral({
         channel: confession.postChannel,
         user: body.user.id,
