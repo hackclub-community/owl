@@ -24,7 +24,7 @@ export function createApp(
             `<html><body><h1>Proxin</h1><p>Owl is running! <a href="/health">Health</a> <a href="/ready">Ready</a></p></body></html>`,
           );
         },
-      }
+      },
       {
         path: "/health",
         method: "GET",
