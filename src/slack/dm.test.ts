@@ -1,8 +1,10 @@
 import { describe, expect, mock, test } from "bun:test";
+import { createHmac } from "node:crypto";
 import type { App } from "@slack/bolt";
 import type { Config } from "../config.js";
 import type { Database } from "../db/client.js";
 import { dmPrompt, registerDmHandlers } from "./dm.js";
+import { contentFromBlocks, contentFromText } from "./content.js";
 import { hashReplyKey, ownsPost } from "./security.js";
 
 const config: Config = {
@@ -123,6 +125,60 @@ const message = {
   text: "hello",
 };
 
+describe("DM prompt", () => {
+  test("quotes multiline plain text without interpreting mention syntax", () => {
+    const prompt = dmPrompt(
+      "hello <@UOTHER>\n<!channel> &amp; goodbye",
+      "UAUTHOR",
+      "DAUTHOR",
+      "100.000001",
+      config.signingSecret,
+    );
+    expect(prompt[1]).toEqual({
+      type: "rich_text",
+      elements: [
+        {
+          type: "rich_text_quote",
+          elements: [{ type: "text", text: "hello @UOTHER\n@channel & goodbye" }],
+        },
+      ],
+    });
+  });
+
+  test("quotes sections while preserving formatting, lists, code, and existing quotes", () => {
+    const content = contentFromBlocks({
+      type: "rich_text",
+      elements: [
+        {
+          type: "rich_text_section",
+          elements: [
+            { type: "text", text: "formatted", style: { bold: true } },
+            { type: "link", url: "https://example.com", text: "link" },
+          ],
+        },
+        {
+          type: "rich_text_list",
+          style: "bullet",
+          elements: [{ type: "rich_text_section", elements: [{ type: "text", text: "item" }] }],
+        },
+        { type: "rich_text_preformatted", elements: [{ type: "text", text: "code" }] },
+        { type: "rich_text_quote", elements: [{ type: "text", text: "quoted" }] },
+      ],
+    });
+    const preview = contentFromBlocks(
+      dmPrompt(content, "UAUTHOR", "DAUTHOR", "100.000001", config.signingSecret)[1],
+    );
+    expect(preview.text).toBe(content.text);
+    const first = content.block.elements[0];
+    if (first?.type !== "rich_text_section") throw new Error("Missing section");
+    expect(preview.block.elements[0]).toEqual({
+      ...first,
+      type: "rich_text_quote",
+    });
+    expect(preview.block.elements.slice(1)).toEqual(content.block.elements.slice(1));
+  });
+});
+
 describe("DM messages", () => {
   test.each([
     { ...message, channel_type: "channel" },
@@ -147,6 +203,8 @@ describe("DM messages", () => {
         unfurl_media: false,
       }),
     );
+    const blocks = h.client.chat.postMessage.mock.calls[0]![0].blocks as unknown[];
+    expect(contentFromBlocks(blocks[1]).block.elements[0]?.type).toBe("rich_text_quote");
     expect(h.insert).not.toHaveBeenCalled();
   });
 
@@ -173,6 +231,7 @@ describe("DM confirmation", () => {
     expect(h.insert).toHaveBeenCalledTimes(1);
     const post = h.getPost()!;
     expect(post.text).toBe("A confession");
+    expect(contentFromBlocks(post.content).block.elements[0]?.type).toBe("rich_text_quote");
     expect(post.postChannel).toBe("CPOST");
     expect(post.replyKeyHash).toBeNull();
     expect(ownsPost(post, "UAUTHOR", "")).toBe(true);
@@ -239,6 +298,36 @@ describe("DM confirmation", () => {
       );
     },
   );
+
+  test("accepts already-issued version 2 prompts without the quote wrapper", async () => {
+    const h = harness();
+    const content = contentFromText("A confession");
+    h.body.message.blocks[1] = content.block;
+    const context = JSON.parse(h.action.value!);
+    context.signature = createHmac("sha256", config.signingSecret)
+      .update(
+        JSON.stringify([
+          "dm-submission",
+          context.user,
+          context.channel,
+          context.ts,
+          JSON.stringify(content.block),
+        ]),
+      )
+      .digest("hex");
+    h.action.value = JSON.stringify(context);
+    await h.submit();
+    expect(h.getPost()?.content).toEqual(content.block);
+    expect(h.client.chat.update).toHaveBeenCalledTimes(1);
+  });
+
+  test("rejects removing the quote wrapper from a signed preview", async () => {
+    const h = harness();
+    h.body.message.blocks[1] = contentFromText("A confession").block;
+    await h.submit();
+    expect(h.insert).not.toHaveBeenCalled();
+    expect(h.client.chat.update).not.toHaveBeenCalled();
+  });
 
   test("duplicate clicks reuse the saved post and do not redeliver review", async () => {
     const h = harness();
