@@ -35,7 +35,7 @@ export function createApp(
               ok: true,
               status: "healthy",
               proxin: true,
-              uptimeSeconds: Math.floor(process.uptime()),
+              uptime: Math.floor(process.uptime()),
             }),
           );
         },
