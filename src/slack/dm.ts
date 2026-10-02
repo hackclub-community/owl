@@ -24,15 +24,23 @@ export function dmPrompt(
 ): KnownBlock[] {
   const content =
     typeof value === "string" ? contentFromText(value) : contentFromBlocks(value.block);
+  const preview = contentFromBlocks({
+    type: "rich_text",
+    elements: content.block.elements.map((element) =>
+      element.type === "rich_text_section"
+        ? { type: "rich_text_quote", elements: element.elements }
+        : element,
+    ),
+  });
   const signature = digest(secret, "dm-submission", [
     user,
     channel,
     ts,
-    JSON.stringify(content.block),
+    JSON.stringify(preview.block),
   ]);
   return [
     { type: "section", text: plain("Do you want to submit this confession for review?") },
-    content.block,
+    preview.block,
     {
       type: "actions",
       block_id: "dm_ownership",
