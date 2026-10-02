@@ -30,7 +30,14 @@ export function createApp(
         method: "GET",
         handler: (_req, res) => {
           res.writeHead(200, { "content-type": "application/json" });
-          res.end('{"ok":true, "status":"healthy", "proxin":true}');
+          res.end(
+            JSON.stringify({
+              ok: true,
+              status: "healthy",
+              proxin: true,
+              uptimeSeconds: Math.floor(process.uptime()),
+            }),
+          );
         },
       },
       {

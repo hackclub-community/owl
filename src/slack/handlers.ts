@@ -76,7 +76,8 @@ export function registerHandlers(app: App, db: Database, config: Config) {
       }
     }
     await db.update(confessions).set(cleared()).where(eq(confessions.id, id));
-    await Promise.all((claimed.reviewTs
+    await Promise.all(
+      claimed.reviewTs
         ? [
             client.chat.update({
               channel: config.channels.review,
@@ -96,7 +97,8 @@ export function registerHandlers(app: App, db: Database, config: Config) {
               ],
             }),
           ]
-        : []));
+        : [],
+    );
     return true;
   }
 
@@ -154,7 +156,10 @@ export function registerHandlers(app: App, db: Database, config: Config) {
   app.command("/owl-revive", async ({ ack, command, client, respond }) => {
     await ack();
     if (command.channel_id !== config.channels.review) {
-      await respond({ response_type: "ephemeral", text: "Run `/owl-revive` in the review channel silly goose!" });
+      await respond({
+        response_type: "ephemeral",
+        text: "Run `/owl-revive` in the review channel silly goose!",
+      });
       return;
     }
     const rows = await db
