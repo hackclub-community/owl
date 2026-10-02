@@ -19,7 +19,7 @@ jobs:
       - name: Install dependencies
         run: bun install
       - name: Run format
-        run: bun fmt
+        run: bun fmt:check
 
   lint:
     runs-on: ubuntu-latest
