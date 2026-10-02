@@ -16,6 +16,16 @@ export function createApp(
     bodyLimit: 512 * 1024,
     customRoutes: [
       {
+        path: "/",
+        method: "GET",
+        handler: (_req, res) => {
+          res.writeHead(200, { "content-type": "text/html" });
+          res.end(
+            `<html><body><h1>Proxin</h1><p>Owl is running! <a href="/health">Health</a> <a href="/ready">Ready</a></p></body></html>`,
+          );
+        },
+      }
+      {
         path: "/health",
         method: "GET",
         handler: (_req, res) => {
