@@ -28,6 +28,19 @@ const messageInput = (label: string, initialText = ""): InputBlock => ({
     ...(initialText.trim() ? { initial_value: contentFromText(initialText).block } : {}),
   },
 });
+const confirmDialog = (
+  title: string,
+  text: string,
+  confirmText: string,
+  denyText: string,
+  btnStyle: "primary" | "danger" = "primary",
+) => ({
+  title: plain(title),
+  text: plain(text),
+  confirm: plain(confirmText),
+  deny: plain(denyText),
+  style: btnStyle,
+});
 export function postView(initialText = ""): ModalView {
   return {
     type: "modal",
@@ -172,16 +185,14 @@ export function decisionBlocks(
           action_id: "undo_review",
           value: `${id}:${revision}`,
           text: plain("Undo decision"),
-          confirm: {
-            title: plain("Undo decision?"),
-            text: plain(
-              verdict === "accepted"
-                ? "Delete the published message and return this post to pending review? Existing thread replies may remain."
-                : "Return this rejected post to pending review?",
-            ),
-            confirm: plain("Undo"),
-            deny: plain("Cancel"),
-          },
+          confirm: confirmDialog(
+            "Undo decision?",
+            verdict === "accepted"
+              ? "Delete the published message and return this post to pending review? Existing thread replies may remain."
+              : "Return this rejected post to pending review?",
+            "Undo",
+            "Cancel",
+          ),
         },
       ],
     },
@@ -211,6 +222,12 @@ export function reviewBlocks(id: number, text: string, block?: unknown): KnownBl
           action_id: "accept_meta",
           value: String(id),
           text: plain("Post to #meta"),
+          confirm: confirmDialog(
+            "Send to #meta?",
+            "Are you super duper sure you want to send this to the pits of #meta?",
+            "Yes!",
+            "Nope!",
+          ),
         },
         {
           type: "button",
