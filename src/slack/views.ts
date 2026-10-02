@@ -223,10 +223,10 @@ export function reviewBlocks(id: number, text: string, block?: unknown): KnownBl
           value: String(id),
           text: plain("Post to #meta"),
           confirm: confirmDialog(
-            "Post to #meta",
-            "Are you sure you want to approve this confession for #meta?",
-            "Approve",
-            "Deny",
+            "Send to #meta?",
+            "Are you super duper sure you want to send this to the pits of #meta?",
+            "Yes!",
+            "Nope!",
           ),
         },
         {
