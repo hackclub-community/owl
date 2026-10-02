@@ -28,12 +28,18 @@ const messageInput = (label: string, initialText = ""): InputBlock => ({
     ...(initialText.trim() ? { initial_value: contentFromText(initialText).block } : {}),
   },
 });
-const confirmDialog = (title: string, text: string, confirmText: string, denyText: string, btnStyle?: "primary" | "danger" = "primary") => ({
+const confirmDialog = (
+  title: string,
+  text: string,
+  confirmText: string,
+  denyText: string,
+  btnStyle: "primary" | "danger" = "primary",
+) => ({
   title: plain(title),
   text: plain(text),
   confirm: plain(confirmText),
   deny: plain(denyText),
-  style: btnStyle
+  style: btnStyle,
 });
 export function postView(initialText = ""): ModalView {
   return {
@@ -182,11 +188,11 @@ export function decisionBlocks(
           confirm: confirmDialog(
             "Undo decision?",
             verdict === "accepted"
-                ? "Delete the published message and return this post to pending review? Existing thread replies may remain."
-                : "Return this rejected post to pending review?",
+              ? "Delete the published message and return this post to pending review? Existing thread replies may remain."
+              : "Return this rejected post to pending review?",
             "Undo",
-            "Cancel"
-          )
+            "Cancel",
+          ),
         },
       ],
     },
@@ -220,8 +226,8 @@ export function reviewBlocks(id: number, text: string, block?: unknown): KnownBl
             "Post to #meta",
             "Are you sure you want to approve this confession for #meta?",
             "Approve",
-            "Deny"
-          )
+            "Deny",
+          ),
         },
         {
           type: "button",
