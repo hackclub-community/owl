@@ -17,7 +17,7 @@ import {
   approveTwView,
   confirmationView,
   decisionBlocks,
-  escapeSlackText,
+  messageFallback,
   MAX_TEXT,
   postView,
   reactionView,
@@ -427,7 +427,7 @@ export function registerHandlers(app: App, db: Database, config: Config) {
       const top = warning ? contentFromText(`TW - ${warning}`) : content;
       const published = await client.chat.postMessage({
         channel: confession.postChannel,
-        text: escapeSlackText(`${id}: ${top.text}`),
+        text: messageFallback(`${id}: ${top.text}`),
         mrkdwn: false,
         parse: "none",
         link_names: false,
@@ -443,7 +443,7 @@ export function registerHandlers(app: App, db: Database, config: Config) {
           channel: confession.postChannel,
           thread_ts: published.ts,
           reply_broadcast: false,
-          text: escapeSlackText(content.text),
+          text: messageFallback(content.text),
           mrkdwn: false,
           parse: "none",
           link_names: false,
@@ -727,7 +727,7 @@ export function registerHandlers(app: App, db: Database, config: Config) {
       ({ ts } = await client.chat.postMessage({
         channel: confession.postChannel,
         thread_ts: confession.postTs!,
-        text: escapeSlackText(content.text),
+        text: messageFallback(content.text),
         mrkdwn: false,
         parse: "none",
         link_names: false,

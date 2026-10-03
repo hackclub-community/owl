@@ -6,7 +6,8 @@ import type {
 } from "@slack/web-api";
 
 export type Content = { block: RichTextBlock; text: string };
-export const MAX_TEXT = 2800;
+export const MAX_TEXT = 12_000;
+export const MAX_BLOCK_TEXT = 2800;
 export const MAX_CONTENT_BYTES = 48 * 1024;
 
 const invalid = (): never => {
@@ -289,6 +290,67 @@ export function storedContent(text: string, block: unknown): Content {
   return block == null ? contentFromText(text) : contentFromBlocks(block);
 }
 
+function splitInlines(elements: RichTextElement[], limit: number): RichTextElement[][] {
+  const chunks: RichTextElement[][] = [[]];
+  let length = 0;
+  for (const element of elements) {
+    let remaining = inlineText(element);
+    if (element.type !== "text" && element.type !== "link") {
+      if (remaining.length > limit) return invalid();
+      if (length + remaining.length > limit) {
+        chunks.push([]);
+        length = 0;
+      }
+      chunks.at(-1)!.push(element);
+      length += remaining.length;
+      continue;
+    }
+    do {
+      if (length === limit) {
+        chunks.push([]);
+        length = 0;
+      }
+      let end = Math.min(remaining.length, limit - length);
+      if (
+        end < remaining.length &&
+        /[\uD800-\uDBFF]/u.test(remaining[end - 1] ?? "") &&
+        /[\uDC00-\uDFFF]/u.test(remaining[end] ?? "")
+      )
+        end--;
+      if (!end && remaining.length) {
+        chunks.push([]);
+        length = 0;
+        continue;
+      }
+      chunks.at(-1)!.push({ ...element, text: remaining.slice(0, end) });
+      length += end;
+      remaining = remaining.slice(end);
+    } while (remaining.length);
+  }
+  return chunks;
+}
+
+function splitElement(element: RichTextBlockElement): RichTextBlockElement[] {
+  if (visible(element).length <= MAX_BLOCK_TEXT) return [element];
+  if (element.type === "rich_text_list") {
+    const offset = (element as typeof element & { offset?: number }).offset ?? 0;
+    return element.elements.flatMap((item, index) => {
+      const marker = `${"  ".repeat(element.indent ?? 0)}${element.style === "bullet" ? "•" : `${offset + index + 1}.`} `;
+      return splitInlines(item.elements, MAX_BLOCK_TEXT - marker.length).map((elements) => ({
+        ...element,
+        ...(element.style === "ordered" ? { offset: offset + index } : {}),
+        elements: [{ ...item, elements }],
+      }));
+    });
+  }
+  return splitInlines(element.elements, MAX_BLOCK_TEXT).map((elements) =>
+    section({
+      ...element,
+      elements,
+    }),
+  );
+}
+
 export function contentBlocks(
   content: Content,
   heading?: string,
@@ -296,7 +358,7 @@ export function contentBlocks(
 ): RichTextBlock[] {
   const { block } = contentFromBlocks(content.block);
   if (heading !== undefined) {
-    if (typeof heading !== "string" || !heading.trim() || heading.length > MAX_TEXT)
+    if (typeof heading !== "string" || !heading.trim() || heading.length > MAX_BLOCK_TEXT)
       return invalid();
     const prefix: RichTextElement[] = [{ type: "text", text: heading, style: { bold: true } }];
     if (inlineHeading) prefix.push({ type: "text", text: ": " });
@@ -305,5 +367,17 @@ export function contentBlocks(
     else block.elements.unshift({ type: "rich_text_section", elements: prefix });
   }
   boundedJSON(block);
-  return [block];
+  const blocks: RichTextBlock[] = [];
+  let length = 0;
+  for (const element of block.elements.flatMap(splitElement)) {
+    const size = visible(element).length;
+    if (!blocks.length || length + 1 + size > MAX_BLOCK_TEXT) {
+      blocks.push({ type: "rich_text", elements: [] });
+      length = 0;
+    }
+    const current = blocks.at(-1)!;
+    length += (current.elements.length ? 1 : 0) + size;
+    current.elements.push(element);
+  }
+  return blocks;
 }

@@ -4,6 +4,7 @@ import type { Config } from "../config.js";
 import type { Database } from "../db/client.js";
 import { dmPrompt, registerDmHandlers } from "./dm.js";
 import { hashReplyKey, ownsPost } from "./security.js";
+import { MAX_TEXT } from "./content.js";
 
 const config: Config = {
   databaseUrl: "unused",
@@ -24,7 +25,7 @@ type Submission = {
   replyKeyHash?: string;
 };
 
-function harness() {
+function harness(initialText = "A confession") {
   const events = new Map<string, Handler>();
   const actions = new Map<string, Handler>();
   const app = {
@@ -87,7 +88,7 @@ function harness() {
   const client = { chat: { postMessage, update } };
   const ack = mock(async () => {});
   registerDmHandlers(app as unknown as App, db as unknown as Database, config);
-  const prompt = dmPrompt("A confession", "UAUTHOR", "DAUTHOR", "100.000001", config.signingSecret);
+  const prompt = dmPrompt(initialText, "UAUTHOR", "DAUTHOR", "100.000001", config.signingSecret);
   const buttonBlock = prompt[3];
   if (buttonBlock?.type !== "actions") throw new Error("Missing submit actions");
   const button = buttonBlock.elements[0];
@@ -124,6 +125,14 @@ const message = {
 };
 
 describe("DM messages", () => {
+  test("accepts the shared maximum and rejects one character over it", async () => {
+    const h = harness();
+    await h.message({ ...message, text: "a".repeat(MAX_TEXT) });
+    expect(h.client.chat.postMessage.mock.calls[0]?.[0].blocks).toBeDefined();
+    await h.message({ ...message, text: "a".repeat(MAX_TEXT + 1) });
+    expect(h.client.chat.postMessage.mock.calls[1]?.[0].text).toContain(String(MAX_TEXT));
+    expect(h.client.chat.postMessage.mock.calls[1]?.[0].blocks).toBeUndefined();
+  });
   test.each([
     { ...message, channel_type: "channel" },
     { ...message, subtype: "message_changed" },
@@ -166,6 +175,15 @@ describe("DM messages", () => {
 });
 
 describe("DM confirmation", () => {
+  test("a maximum-length DM survives signature verification, storage, and review delivery", async () => {
+    const body = "a".repeat(MAX_TEXT);
+    const h = harness(body);
+    await h.submit();
+    expect(h.getPost()?.text).toBe(body);
+    expect(h.getPost()?.reviewTs).toBe("200.000001");
+    const blocks = h.client.chat.postMessage.mock.calls[0]?.[0].blocks;
+    expect(Array.isArray(blocks) && blocks.length > 2).toBe(true);
+  });
   test("saves salted ownership, confirms, and delivers to review", async () => {
     const h = harness();
     await h.submit();

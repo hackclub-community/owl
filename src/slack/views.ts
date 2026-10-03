@@ -4,6 +4,19 @@ import { contentBlocks, contentFromText, storedContent, MAX_TEXT } from "./conte
 export { MAX_TEXT } from "./content.js";
 export const escapeSlackText = (text: string) =>
   text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+export const MAX_MESSAGE_TEXT = 40_000;
+// because apparently you can do this shit?
+export function messageFallback(text: string): string {
+  const escaped = escapeSlackText(text);
+  if (escaped.length <= MAX_MESSAGE_TEXT) return escaped;
+  let fallback = "";
+  for (const character of text) {
+    const escapedCharacter = escapeSlackText(character);
+    if (fallback.length + escapedCharacter.length > MAX_MESSAGE_TEXT - 1) break;
+    fallback += escapedCharacter;
+  }
+  return `${fallback}…`;
+}
 const plain = (text: string) => ({ type: "plain_text" as const, text });
 const input = (id: string, label: string, multiline = false, optional = false): InputBlock => ({
   type: "input",
@@ -22,6 +35,7 @@ const messageInput = (label: string, initialText = ""): InputBlock => ({
   type: "input",
   block_id: "text",
   label: plain(label),
+  hint: plain(`Up to ${MAX_TEXT.toLocaleString("en-US")} characters.`),
   element: {
     type: "rich_text_input",
     action_id: "text",

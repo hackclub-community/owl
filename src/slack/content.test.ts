@@ -7,6 +7,7 @@ import type {
 } from "@slack/web-api";
 import {
   MAX_CONTENT_BYTES,
+  MAX_BLOCK_TEXT,
   MAX_TEXT,
   contentBlocks,
   contentFromBlocks,
@@ -422,13 +423,13 @@ describe("input, storage and headings", () => {
 
   test("validates headings and bounds the final block size", () => {
     const content = contentFromText("body");
-    for (const heading of ["", " \t ", "a".repeat(MAX_TEXT + 1)]) {
+    for (const heading of ["", " \t ", "a".repeat(MAX_BLOCK_TEXT + 1)]) {
       expect(() => contentBlocks(content, heading)).toThrow(invalid);
     }
-    expect(contentBlocks(content, "a".repeat(MAX_TEXT))).toHaveLength(1);
+    expect(contentBlocks(content, "a".repeat(MAX_BLOCK_TEXT))).toHaveLength(2);
     const large = contentFromBlocks(
       inlines(text("x"), ...Array.from({ length: 1800 }, () => text(""))),
     );
-    expect(() => contentBlocks(large, "a".repeat(MAX_TEXT))).toThrow(byteError);
+    expect(() => contentBlocks(large, "a".repeat(MAX_BLOCK_TEXT))).toThrow(byteError);
   });
 });
