@@ -2,7 +2,7 @@
 
 _hoot hoot!_
 
-a simple Slack bot for anonymous confessions, replies, and reactions. built to be fast, secure, and not fancy. it should stand the test of time, and not be a burden to maintain. best deployed to Coolify via the [`Dockerfile`](Dockerfile).
+a simple Slack bot for anonymous confessions, replies, and reactions. built to be fast, secure, and not fancy. it should stand the test of time, and not be a burden to maintain. best deployed to Coolify via the [`Dockerfile`](Dockerfile). database is managed by drizzle and migrations are handled by `bun run db:migrate`.
 
 ## local setup
 
@@ -14,6 +14,8 @@ docker compose up -d --wait
 bun run db:migrate
 bun run dev
 ```
+
+we also use [oxc](https://oxc.rs/) tooling for formatting and linting, so pls run `bun fmt` and `bun lint` before committing!
 
 ## cmds
 
