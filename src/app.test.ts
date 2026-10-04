@@ -27,6 +27,7 @@ test("health reports total process uptime in whole seconds", () => {
           DATABASE_URL: "postgres://localhost/prox3_test",
           SLACK_BOT_TOKEN: "xoxb-test",
           SLACK_SIGNING_SECRET: "test-secret",
+          OWL_PEPPER: "testy-test-pepper-pls-be-long-enough",
           POST_CHANNEL: "post", META_CHANNEL: "meta",
           REVIEW_CHANNEL: "review", LOG_CHANNEL: "log",
         });

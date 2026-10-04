@@ -50,6 +50,13 @@
       "when": 1790964953227,
       "tag": "0006_narrow_la_nuit",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1791089240446,
+      "tag": "0007_author_hash_version",
+      "breakpoints": true
     }
   ]
 }

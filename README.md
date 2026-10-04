@@ -29,7 +29,7 @@ we also use [oxc](https://oxc.rs/) tooling for formatting and linting, so pls ru
 
 the submission form lets you choose a salted account hash or a generated private reply key. neither mode stores your raw Slack user ID. the private key mode needs both the key and the original account for replies, reactions, and withdrawal. you gotta save the key when it is shown, if it is lost, then its gg.
 
-salted account hashes recognize your account automatically, but in theory, someone with database access can try to crack them against known Slack user IDs. however, the owl bot running in hack club is hosted by trusted members of the community and less people have access to the owl database than the original prox2 database!
+account hashes recognize your account automatically. they are salted and peppered and run through scrypt, so a leaked database alone is useless and checking every Slack user ID against one post takes hours of CPU instead of instantly. someone with both the database and the pepper can still check a _specific_ guess quickly though, so use the private key if that matters to you. the owl bot running in Hack Club is hosted by trusted members of the community and less people have access to the owl database than the original prox2 database!
 
 ## credits
 

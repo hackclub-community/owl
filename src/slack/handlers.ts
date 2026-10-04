@@ -74,7 +74,7 @@ export function registerHandlers(app: App, db: Database, config: Config) {
   }
   async function withdraw(id: number, userId: string, key: string, client: WebClient) {
     const post = await db.query.confessions.findFirst({ where: eq(confessions.id, id) });
-    if (!post || !ownsPost(post, userId, key)) return false;
+    if (!post || !(await ownsPost(post, userId, key, config.pepper))) return false;
     const [claimed] = await db
       .update(confessions)
       .set({ status: "withdrawing", updatedAt: new Date() })
@@ -152,7 +152,7 @@ export function registerHandlers(app: App, db: Database, config: Config) {
         : undefined;
     if (
       !post ||
-      !ownsPost(post, body.user.id, key) ||
+      !(await ownsPost(post, body.user.id, key, config.pepper)) ||
       !["pending", "accepted", "withdrawing", "rejected"].includes(post.status)
     ) {
       await ack({
@@ -280,7 +280,7 @@ export function registerHandlers(app: App, db: Database, config: Config) {
       return;
     }
     const post = await published(context.channel, context.ts);
-    if (!post || !ownsPost(post, body.user.id, key)) {
+    if (!post || !(await ownsPost(post, body.user.id, key, config.pepper))) {
       await ack({
         response_action: "errors",
         errors: { key: "Use the original account, plus its private key if you chose that option." },
@@ -365,7 +365,7 @@ export function registerHandlers(app: App, db: Database, config: Config) {
           content: content.block,
           ...(key
             ? { replyKeyHash: hashReplyKey(key, body.user.id) }
-            : authorCredential(body.user.id)),
+            : await authorCredential(body.user.id, config.pepper)),
           postChannel: config.channels.post,
         })
         .onConflictDoNothing({ target: confessions.submissionId })
@@ -712,7 +712,7 @@ export function registerHandlers(app: App, db: Database, config: Config) {
       });
       return;
     }
-    if (!confession || !ownsPost(confession, body.user.id, key)) {
+    if (!confession || !(await ownsPost(confession, body.user.id, key, config.pepper))) {
       await ack({
         response_action: "errors",
         errors: {

@@ -1,82 +1,136 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
+  AUTHOR_HASH_VERSION,
   authorCredential,
   hashAuthor,
+  legacyAuthorHash,
   hashReplyKey,
   matchesHash,
   newReplyKey,
   ownsPost,
+  pepperAuthorHash,
 } from "./security.js";
 
 const user = "U123";
 const otherUser = "U456";
 const key = "reply-secret";
+const pepper = "p".repeat(32);
+const otherPepper = "q".repeat(32);
+const owns = (post: Parameters<typeof ownsPost>[0], userId: string, replyKey: string) =>
+  ownsPost(post, userId, replyKey, pepper);
 const legacyPost = () => ({
   authorSalt: null,
   authorHash: null,
+  authorHashVersion: 1,
   replyKeyHash: hashReplyKey(key, user),
+});
+const accountPost = async (userId: string) => ({
+  ...(await authorCredential(userId, pepper)),
+  replyKeyHash: null,
 });
 
 describe("ownership", () => {
-  test("account credentials authorize the author without a reply key", () => {
-    const post = { ...authorCredential(user), replyKeyHash: null };
-    expect(ownsPost(post, user, "")).toBe(true);
-    expect(ownsPost(post, user, "unrelated-key")).toBe(true);
-    expect(ownsPost(post, otherUser, "")).toBe(false);
+  test("account credentials authorize the author without a reply key", async () => {
+    const post = await accountPost(user);
+    expect(await owns(post, user, "")).toBe(true);
+    expect(await owns(post, user, "unrelated-key")).toBe(true);
+    expect(await owns(post, otherUser, "")).toBe(false);
   });
 
-  test("account credentials take precedence over a matching legacy key", () => {
-    const post = { ...authorCredential(user), replyKeyHash: hashReplyKey(key, otherUser) };
-    expect(ownsPost(post, otherUser, key)).toBe(false);
-    expect(ownsPost(post, user, key)).toBe(true);
+  test("account credentials take precedence over a matching legacy key", async () => {
+    const post = { ...(await accountPost(user)), replyKeyHash: hashReplyKey(key, otherUser) };
+    expect(await owns(post, otherUser, key)).toBe(false);
+    expect(await owns(post, user, key)).toBe(true);
   });
 
-  test("legacy ownership requires both the correct key and account", () => {
-    expect(ownsPost(legacyPost(), user, key)).toBe(true);
-    expect(ownsPost(legacyPost(), user, "wrong-key")).toBe(false);
-    expect(ownsPost(legacyPost(), otherUser, key)).toBe(false);
-    expect(ownsPost(legacyPost(), user, "")).toBe(false);
-    expect(ownsPost({ ...legacyPost(), replyKeyHash: null }, user, key)).toBe(false);
-    expect(ownsPost({ authorSalt: null, authorHash: null, replyKeyHash: null }, user, key)).toBe(
-      false,
-    );
+  test("peppered account hashes need the same pepper", async () => {
+    const post = await accountPost(user);
+    expect(await ownsPost(post, user, "", otherPepper)).toBe(false);
   });
 
-  test("incomplete account credentials fall back to legacy ownership", () => {
-    expect(ownsPost({ ...legacyPost(), authorSalt: "salt" }, user, key)).toBe(true);
-    expect(ownsPost({ ...legacyPost(), authorHash: hashAuthor(user, "salt") }, user, key)).toBe(
-      true,
-    );
+  test("v1 account hashes still verify until migrate upgrades them", async () => {
+    const post = {
+      authorSalt: "salt",
+      authorHash: legacyAuthorHash(user, "salt"),
+      authorHashVersion: 1,
+      replyKeyHash: null,
+    };
+    expect(await owns(post, user, "")).toBe(true);
+    expect(await owns(post, otherUser, "")).toBe(false);
+    // block fat fingers!
+    expect(await owns({ ...post, authorHashVersion: AUTHOR_HASH_VERSION }, user, "")).toBe(false);
+  });
+
+  test("legacy ownership requires both the correct key and account", async () => {
+    expect(await owns(legacyPost(), user, key)).toBe(true);
+    expect(await owns(legacyPost(), user, "wrong-key")).toBe(false);
+    expect(await owns(legacyPost(), otherUser, key)).toBe(false);
+    expect(await owns(legacyPost(), user, "")).toBe(false);
+    expect(await owns({ ...legacyPost(), replyKeyHash: null }, user, key)).toBe(false);
+    expect(
+      await owns(
+        { authorSalt: null, authorHash: null, authorHashVersion: 1, replyKeyHash: null },
+        user,
+        key,
+      ),
+    ).toBe(false);
+  });
+
+  test("incomplete account credentials fall back to legacy ownership", async () => {
+    expect(await owns({ ...legacyPost(), authorSalt: "salt" }, user, key)).toBe(true);
+    expect(
+      await owns(
+        { ...legacyPost(), authorHash: await hashAuthor(user, "salt", pepper) },
+        user,
+        key,
+      ),
+    ).toBe(true);
   });
 
   test.each(["", "not-hex", "ab", "a".repeat(63), "a".repeat(66), "gg".repeat(32)])(
     "malformed stored hash %j denies ownership without throwing",
-    (hash) => {
-      expect(ownsPost({ ...legacyPost(), replyKeyHash: hash }, user, key)).toBe(false);
-      expect(
-        ownsPost({ authorSalt: "salt", authorHash: hash, replyKeyHash: null }, user, key),
-      ).toBe(false);
+    async (hash) => {
+      expect(await owns({ ...legacyPost(), replyKeyHash: hash }, user, key)).toBe(false);
+      for (const authorHashVersion of [1, AUTHOR_HASH_VERSION]) {
+        expect(
+          await owns(
+            { authorSalt: "salt", authorHash: hash, authorHashVersion, replyKeyHash: null },
+            user,
+            key,
+          ),
+        ).toBe(false);
+      }
     },
   );
 });
 
 describe("hashes and credentials", () => {
-  test("hashes use the expected SHA-256 inputs and are account/salt specific", () => {
+  test("hashes use the expected SHA-256 inputs and are account/salt specific", async () => {
     const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
     expect(hashReplyKey(key, user)).toBe(sha256(`${key}:${user}`));
-    expect(hashAuthor(user, "salt")).toBe(sha256(`salt:${user}`));
+    expect(legacyAuthorHash(user, "salt")).toBe(sha256(`salt:${user}`));
     expect(hashReplyKey(key, user)).not.toBe(hashReplyKey(key, otherUser));
     expect(hashReplyKey(key, user)).not.toBe(hashReplyKey("other-key", user));
-    expect(hashAuthor(user, "salt")).not.toBe(hashAuthor(otherUser, "salt"));
-    expect(hashAuthor(user, "salt")).not.toBe(hashAuthor(user, "other-salt"));
+    const author = await hashAuthor(user, "salt", pepper);
+    expect(author).not.toBe(legacyAuthorHash(user, "salt"));
+    expect(author).not.toBe(await hashAuthor(otherUser, "salt", pepper));
+    expect(author).not.toBe(await hashAuthor(user, "other-salt", pepper));
+    expect(author).not.toBe(await hashAuthor(user, "salt", otherPepper));
   });
 
-  test("new keys and author salts are independent 32-byte hex secrets", () => {
+  test("upgrading a stored v1 hash matches hashing from scratch", async () => {
+    const legacy = legacyAuthorHash(user, "salt");
+    expect(await pepperAuthorHash(legacy, "salt", pepper)).toBe(
+      await hashAuthor(user, "salt", pepper),
+    );
+  });
+
+  test("new keys and author salts are independent 32-byte hex secrets", async () => {
     const firstKey = newReplyKey();
     const secondKey = newReplyKey();
-    const first = authorCredential(user);
-    const second = authorCredential(user);
+    const first = await authorCredential(user, pepper);
+    const second = await authorCredential(user, pepper);
     for (const value of [
       firstKey,
       secondKey,
@@ -89,8 +143,9 @@ describe("hashes and credentials", () => {
     expect(firstKey).not.toBe(secondKey);
     expect(first.authorSalt).not.toBe(second.authorSalt);
     expect(first.authorHash).not.toBe(second.authorHash);
-    expect(first.authorHash).toBe(hashAuthor(user, first.authorSalt));
-    expect(second.authorHash).toBe(hashAuthor(user, second.authorSalt));
+    expect(first.authorHashVersion).toBe(AUTHOR_HASH_VERSION);
+    expect(first.authorHash).toBe(await hashAuthor(user, first.authorSalt, pepper));
+    expect(second.authorHash).toBe(await hashAuthor(user, second.authorSalt, pepper));
   });
 
   test("hash comparison accepts matching digest bytes and rejects mismatches", () => {

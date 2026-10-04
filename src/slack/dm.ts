@@ -185,14 +185,14 @@ export function registerDmHandlers(app: App, db: Database, config: Config) {
           postChannel: config.channels.post,
           ...(useKey
             ? { replyKeyHash: hashReplyKey(privateKey, body.user.id) }
-            : authorCredential(body.user.id)),
+            : await authorCredential(body.user.id, config.pepper)),
         })
         .onConflictDoNothing({ target: confessions.submissionId })
         .returning();
       post ??= await db.query.confessions.findFirst({
         where: eq(confessions.submissionId, submissionId),
       });
-      if (!post || !ownsPost(post, body.user.id, privateKey))
+      if (!post || !(await ownsPost(post, body.user.id, privateKey, config.pepper)))
         throw new Error("Unavailable submission");
     } catch {
       await reply("Could not submit this confession. Please try again, or use `/owl`.");

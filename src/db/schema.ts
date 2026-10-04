@@ -8,6 +8,7 @@ import {
   uniqueIndex,
   check,
   primaryKey,
+  smallint,
 } from "drizzle-orm/pg-core";
 import type { RichTextBlock } from "@slack/web-api";
 import { sql } from "drizzle-orm";
@@ -29,6 +30,7 @@ export const confessions = pgTable(
     replyKeyHash: text("reply_key_hash").unique(),
     authorSalt: text("author_salt"),
     authorHash: text("author_hash"),
+    authorHashVersion: smallint("author_hash_version").notNull().default(1),
     postChannel: text("post_channel").notNull(),
     reviewTs: text("review_ts"),
     postTs: text("post_ts"),

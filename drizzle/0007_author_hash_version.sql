@@ -1,0 +1,1 @@
+ALTER TABLE "confessions" ADD COLUMN "author_hash_version" smallint DEFAULT 1 NOT NULL;

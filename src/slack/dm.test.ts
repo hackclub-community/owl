@@ -10,6 +10,7 @@ const config: Config = {
   databaseUrl: "unused",
   token: "unused",
   signingSecret: "test-signing-secret",
+  pepper: "testy-test-pepper-pls-be-long-enough",
   channels: { post: "CPOST", meta: "CMETA", review: "CREVIEW", log: "CLOG" },
   port: 8080,
   poolSize: 1,
@@ -22,6 +23,7 @@ type Submission = {
   postChannel: string;
   authorSalt?: string;
   authorHash?: string;
+  authorHashVersion?: number;
   replyKeyHash?: string;
 };
 
@@ -33,12 +35,13 @@ function harness(initialText = "A confession") {
     action: (name: string, handler: Handler) => actions.set(name, handler),
   };
   let post:
-    | (Omit<Submission, "authorSalt" | "authorHash" | "replyKeyHash"> & {
+    | (Omit<Submission, "authorSalt" | "authorHash" | "authorHashVersion" | "replyKeyHash"> & {
         id: number;
         status: string;
         reviewTs: string | null;
         authorSalt: string | null;
         authorHash: string | null;
+        authorHashVersion: number;
         replyKeyHash: string | null;
       })
     | undefined;
@@ -50,6 +53,7 @@ function harness(initialText = "A confession") {
           post = {
             authorSalt: null,
             authorHash: null,
+            authorHashVersion: 1,
             replyKeyHash: null,
             ...values,
             id: 67,
@@ -193,7 +197,7 @@ describe("DM confirmation", () => {
     expect(post.text).toBe("A confession");
     expect(post.postChannel).toBe("CPOST");
     expect(post.replyKeyHash).toBeNull();
-    expect(ownsPost(post, "UAUTHOR", "")).toBe(true);
+    expect(await ownsPost(post, "UAUTHOR", "", config.pepper)).toBe(true);
     expect(JSON.stringify(post)).not.toContain("UAUTHOR");
     expect(h.client.chat.update).toHaveBeenCalledWith(
       expect.objectContaining({
