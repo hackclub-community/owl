@@ -1,5 +1,5 @@
 // hashes are useless without this, so a short or missing one is a hard fucky wucky
-export function readPepper(env: NodeJS.ProcessEnv = process.env) {
+function readPepper(env: NodeJS.ProcessEnv = process.env) {
   const value = env.OWL_PEPPER?.trim() ?? "";
   if (value.length < 32) throw new Error("yo i need OWL_PEPPER (try `openssl rand -hex 32`)");
   return value;

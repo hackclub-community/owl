@@ -8,9 +8,7 @@ import {
   matchesHash,
   newReplyKey,
   ownsPost,
-  pepperHash,
   REPLY_KEY_HASH_VERSION,
-  REPLY_KEY_SALT,
   replyKeyCredential,
 } from "./security.js";
 
@@ -114,16 +112,6 @@ describe("hashes and credentials", () => {
     expect(author).not.toBe(await hashAuthor(otherUser, "salt", pepper));
     expect(author).not.toBe(await hashAuthor(user, "other-salt", pepper));
     expect(author).not.toBe(await hashAuthor(user, "salt", otherPepper));
-  });
-
-  // we kinda need this incase someone gets caught mid-migration, but realisticly this should never happen
-  test("peppering a stored sha256 hash matches hashing from scratch", async () => {
-    expect(await pepperHash(sha256(`salt:${user}`), "salt", pepper)).toBe(
-      await hashAuthor(user, "salt", pepper),
-    );
-    expect(await pepperHash(sha256(`${key}:${user}`), REPLY_KEY_SALT, pepper)).toBe(
-      await hashReplyKey(key, user, pepper),
-    );
   });
 
   test("reply key credentials are tagged with the current version", async () => {

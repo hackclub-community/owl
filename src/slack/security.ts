@@ -4,13 +4,13 @@ import { createHash, createHmac, randomBytes, scrypt, timingSafeEqual } from "no
 // v2 = scrypt over the v1 hash keyed with peppa!
 export const AUTHOR_HASH_VERSION = 2;
 export const REPLY_KEY_HASH_VERSION = 2;
-export const REPLY_KEY_SALT = "owl:reply-key";
+const REPLY_KEY_SALT = "owl:reply-key";
 const SCRYPT = { N: 2 ** 15, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
 export const newReplyKey = () => randomBytes(32).toString("hex");
 
-export function pepperHash(digest: string, salt: string, pepper: string) {
+function pepperHash(digest: string, salt: string, pepper: string) {
   const keyed = createHmac("sha256", pepper).update(digest).digest();
   return new Promise<string>((resolve, reject) =>
     scrypt(keyed, salt, 32, SCRYPT, (error, hash) =>
