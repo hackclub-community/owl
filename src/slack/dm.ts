@@ -62,6 +62,12 @@ export function dmPrompt(
           text: plain("Yes, submit"),
           value: JSON.stringify({ version: 2, user, channel, ts, signature }),
         },
+        {
+          type: "button",
+          action_id: "dm_decline",
+          text: plain("No, cancel"),
+          value: JSON.stringify({ version: 2, user, channel, ts, signature }),
+        },
       ],
     },
   ];
@@ -105,141 +111,202 @@ export function registerDmHandlers(app: App, db: Database, config: Config) {
   app.action("dm_passphrase", async ({ ack }) => {
     await ack();
   });
-  app.action<BlockAction<ButtonAction>>("dm_submit", async ({ ack, body, action, client }) => {
-    await ack();
-    if (!body.channel?.id.startsWith("D") || !body.message?.ts) return;
-    const reply = (text: string) =>
-      client.chat.postMessage({
-        channel: body.channel!.id,
-        thread_ts: body.message!.thread_ts ?? body.message!.ts,
-        text,
-      });
-    const preview = body.message.blocks?.[1];
-    let context: { version?: number; user: string; channel: string; ts: string; signature: string };
-    let content: Content;
-    try {
-      context = JSON.parse(action.value ?? "");
-      if (
-        !context ||
-        ![context.user, context.channel, context.ts, context.signature].every(
-          (value) => typeof value === "string",
-        ) ||
-        context.user !== body.user.id ||
-        context.channel !== body.channel.id ||
-        !context.channel.startsWith("D")
-      )
-        throw new Error("Invalid prompt");
-      let signedContent: string;
-      let sanitized: Content | undefined;
-      if (context.version === 2) {
-        sanitized = contentFromBlocks(preview);
-        signedContent = JSON.stringify(sanitized.block);
-      } else if (context.version === undefined) {
-        const quote =
-          preview?.type === "rich_text" && preview.elements.length === 1
-            ? preview.elements[0]
-            : undefined;
-        const quotedText =
-          quote?.type === "rich_text_quote" && quote.elements.length === 1
-            ? quote.elements[0]
-            : undefined;
-        signedContent =
-          quotedText?.type === "text"
-            ? quotedText.text
-            : preview?.type === "section" && preview.text?.type === "plain_text"
-              ? preview.text.text
-              : "";
-        if (!signedContent || signedContent.length > MAX_TEXT) throw new Error("Invalid prompt");
-      } else throw new Error("Invalid prompt version");
-      if (
-        !matchesHash(
-          context.signature,
-          digest(config.signingSecret, "dm-submission", [
-            context.user,
-            context.channel,
-            context.ts,
-            signedContent,
-          ]),
-        )
-      )
-        throw new Error("Invalid prompt");
-      content = sanitized ?? contentFromText(signedContent);
-    } catch {
-      await reply("This confirmation is invalid. Send your confession to me again!");
-      return;
-    }
-    const submissionId = `dm:${context.signature}`;
-    const useKey =
-      body.state?.values.dm_ownership?.dm_passphrase?.selected_options?.some(
-        (option) => option.value === "passphrase",
-      ) ?? false;
-    let keyView: string | undefined;
-    if (useKey) {
-      try {
-        const opened = await client.views.open({
-          trigger_id: body.trigger_id,
-          view: noticeView("Submitting…", "Generating your private reply key…"),
+  for (const actionId of ["dm_submit", "dm_decline"]) {
+    app.action<BlockAction<ButtonAction>>(actionId, async ({ ack, body, action, client }) => {
+      await ack();
+      if (!body.channel?.id.startsWith("D") || !body.message?.ts) return;
+      const reply = (text: string) =>
+        client.chat.postMessage({
+          channel: body.channel!.id,
+          thread_ts: body.message!.thread_ts ?? body.message!.ts,
+          text,
         });
-        keyView = opened.view?.id;
-        if (!keyView) throw new Error("Slack returned no view id");
+      const preview = body.message.blocks?.[1];
+      let context: {
+        version?: number;
+        user: string;
+        channel: string;
+        ts: string;
+        signature: string;
+      };
+      let content: Content;
+      try {
+        context = JSON.parse(action.value ?? "");
+        if (
+          !context ||
+          ![context.user, context.channel, context.ts, context.signature].every(
+            (value) => typeof value === "string",
+          ) ||
+          context.user !== body.user.id ||
+          context.channel !== body.channel.id ||
+          !context.channel.startsWith("D")
+        )
+          throw new Error("Invalid prompt");
+        let signedContent: string;
+        let sanitized: Content | undefined;
+        if (context.version === 2) {
+          sanitized = contentFromBlocks(preview);
+          signedContent = JSON.stringify(sanitized.block);
+        } else if (context.version === undefined) {
+          const quote =
+            preview?.type === "rich_text" && preview.elements.length === 1
+              ? preview.elements[0]
+              : undefined;
+          const quotedText =
+            quote?.type === "rich_text_quote" && quote.elements.length === 1
+              ? quote.elements[0]
+              : undefined;
+          signedContent =
+            quotedText?.type === "text"
+              ? quotedText.text
+              : preview?.type === "section" && preview.text?.type === "plain_text"
+                ? preview.text.text
+                : "";
+          if (!signedContent || signedContent.length > MAX_TEXT) throw new Error("Invalid prompt");
+        } else throw new Error("Invalid prompt version");
+        if (
+          !matchesHash(
+            context.signature,
+            digest(config.signingSecret, "dm-submission", [
+              context.user,
+              context.channel,
+              context.ts,
+              signedContent,
+            ]),
+          )
+        )
+          throw new Error("Invalid prompt");
+        content = sanitized ?? contentFromText(signedContent);
       } catch {
-        await reply("Something broke, hit the button to retry it?");
+        await reply("This confirmation is invalid. Send your confession to me again!");
         return;
       }
-    }
-    const showKey = (view: Parameters<typeof client.views.update>[0]["view"]) =>
-      client.views.update({ view_id: keyView!, view });
-    const privateKey = useKey ? newReplyKey() : null;
-    let post;
-    let inserted = false;
-    try {
-      [post] = await db
-        .insert(confessions)
-        .values({
-          submissionId,
-          text: content.text,
-          content: content.block,
-          postChannel: config.channels.post,
-          ...(privateKey
-            ? await replyKeyCredential(privateKey, body.user.id, config.pepper)
-            : await authorCredential(body.user.id, config.pepper)),
-        })
-        .onConflictDoNothing({ target: confessions.submissionId })
-        .returning();
-      inserted = !!post;
-      // because this can get double fired (fuck slack lol)
-      post ??= await db.query.confessions.findFirst({
-        where: eq(confessions.submissionId, submissionId),
-      });
-      if (!post) throw new Error("Unavailable submission");
-    } catch {
-      if (keyView)
-        await showKey(noticeView("Not submitted", "Nothing was saved. Please try again.")).catch(
-          () => {},
-        );
-      await reply("Could not submit this confession. Please try again, or use `/owl`.");
-      return;
-    }
-    const confirmation = inserted
-      ? `Confession #${post.id} submitted and awaiting review.`
-      : `Confession #${post.id} was already submitted (${post.status}).`;
-    if (keyView) {
+      if (actionId === "dm_decline") {
+        await client.chat
+          .delete({ channel: context.channel, ts: body.message.ts })
+          .catch((error) => {
+            if (error?.data?.error !== "message_not_found") throw error;
+          });
+        await client.reactions
+          .add({
+            channel: context.channel,
+            timestamp: context.ts,
+            name: "x",
+          })
+          .catch((error) => {
+            if (error?.data?.error !== "already_reacted") throw error;
+          });
+        return;
+      }
+      const submissionId = `dm:${context.signature}`;
+      const useKey =
+        body.state?.values.dm_ownership?.dm_passphrase?.selected_options?.some(
+          (option) => option.value === "passphrase",
+        ) ?? false;
+      let keyView: string | undefined;
+      if (useKey) {
+        try {
+          const opened = await client.views.open({
+            trigger_id: body.trigger_id,
+            view: noticeView("Submitting…", "Generating your private reply key…"),
+          });
+          keyView = opened.view?.id;
+          if (!keyView) throw new Error("Slack returned no view id");
+        } catch {
+          await reply("Something broke, hit the button to retry it?");
+          return;
+        }
+      }
+      const showKey = (view: Parameters<typeof client.views.update>[0]["view"]) =>
+        client.views.update({ view_id: keyView!, view });
+      const privateKey = useKey ? newReplyKey() : null;
+      let post;
+      let inserted = false;
       try {
-        await showKey(
-          inserted && privateKey
-            ? confirmationView(post.id, privateKey)
-            : noticeView(
-                "Already submitted",
-                post.replyKeyHash
-                  ? `${confirmation} Its private reply key was only shown the first time.`
-                  : `${confirmation} It uses your account hash, so no key is needed.`,
-              ),
-        );
+        [post] = await db
+          .insert(confessions)
+          .values({
+            submissionId,
+            text: content.text,
+            content: content.block,
+            postChannel: config.channels.post,
+            ...(privateKey
+              ? await replyKeyCredential(privateKey, body.user.id, config.pepper)
+              : await authorCredential(body.user.id, config.pepper)),
+          })
+          .onConflictDoNothing({ target: confessions.submissionId })
+          .returning();
+        inserted = !!post;
+        // because this can get double fired (fuck slack lol)
+        post ??= await db.query.confessions.findFirst({
+          where: eq(confessions.submissionId, submissionId),
+        });
+        if (!post) throw new Error("Unavailable submission");
       } catch {
-        // nobody has the key, so drop the post before it reaches review
-        if (inserted) {
-          await db
-            .delete(confessions)
+        if (keyView)
+          await showKey(noticeView("Not submitted", "Nothing was saved. Please try again.")).catch(
+            () => {},
+          );
+        await reply("Could not submit this confession. Please try again, or use `/owl`.");
+        return;
+      }
+      const confirmation = inserted
+        ? `Confession #${post.id} submitted and awaiting review.`
+        : `Confession #${post.id} was already submitted (${post.status}).`;
+      if (keyView) {
+        try {
+          await showKey(
+            inserted && privateKey
+              ? confirmationView(post.id, privateKey)
+              : noticeView(
+                  "Already submitted",
+                  post.replyKeyHash
+                    ? `${confirmation} Its private reply key was only shown the first time.`
+                    : `${confirmation} It uses your account hash, so no key is needed.`,
+                ),
+          );
+        } catch {
+          // nobody has the key, so drop the post before it reaches review
+          if (inserted) {
+            await db
+              .delete(confessions)
+              .where(
+                and(
+                  eq(confessions.id, post.id),
+                  eq(confessions.status, "pending"),
+                  isNull(confessions.reviewTs),
+                ),
+              )
+              .catch(() => {});
+            await reply(
+              "Could not properly generate your key, so nothing was submitted. Please try again. :(",
+            );
+            return;
+          }
+        }
+      }
+      const blocks: KnownBlock[] = [
+        { type: "section", text: plain(confirmation) },
+        {
+          type: "section",
+          text: plain(
+            post.replyKeyHash
+              ? "Your private reply key was shown once in a popup and is not stored in this chat. Replies, reactions, and withdrawal require that key and this Slack account."
+              : "Your Slack account will be recognized through its salted hash. No reply key is needed.",
+          ),
+        },
+      ];
+      await client.chat.update({
+        channel: context.channel,
+        ts: body.message!.ts,
+        text: confirmation,
+        blocks,
+      });
+      try {
+        await db.transaction(async (tx) => {
+          const [pending] = await tx
+            .select()
+            .from(confessions)
             .where(
               and(
                 eq(confessions.id, post.id),
@@ -247,62 +314,26 @@ export function registerDmHandlers(app: App, db: Database, config: Config) {
                 isNull(confessions.reviewTs),
               ),
             )
-            .catch(() => {});
-          await reply(
-            "Could not properly generate your key, so nothing was submitted. Please try again. :(",
-          );
-          return;
-        }
-      }
-    }
-    const blocks: KnownBlock[] = [
-      { type: "section", text: plain(confirmation) },
-      {
-        type: "section",
-        text: plain(
-          post.replyKeyHash
-            ? "Your private reply key was shown once in a popup and is not stored in this chat. Replies, reactions, and withdrawal require that key and this Slack account."
-            : "Your Slack account will be recognized through its salted hash. No reply key is needed.",
-        ),
-      },
-    ];
-    await client.chat.update({
-      channel: context.channel,
-      ts: body.message!.ts,
-      text: confirmation,
-      blocks,
-    });
-    try {
-      await db.transaction(async (tx) => {
-        const [pending] = await tx
-          .select()
-          .from(confessions)
-          .where(
-            and(
-              eq(confessions.id, post.id),
-              eq(confessions.status, "pending"),
-              isNull(confessions.reviewTs),
-            ),
-          )
-          .for("update");
-        if (!pending) return;
-        const review = await client.chat.postMessage({
-          channel: config.channels.review,
-          text: `Anonymous post #${pending.id}`,
-          blocks: reviewBlocks(pending.id, pending.text, pending.content),
-          unfurl_links: false,
-          unfurl_media: false,
+            .for("update");
+          if (!pending) return;
+          const review = await client.chat.postMessage({
+            channel: config.channels.review,
+            text: `Anonymous post #${pending.id}`,
+            blocks: reviewBlocks(pending.id, pending.text, pending.content),
+            unfurl_links: false,
+            unfurl_media: false,
+          });
+          if (!review.ts) throw new Error("Slack returned no review timestamp");
+          await tx
+            .update(confessions)
+            .set({ reviewTs: review.ts, updatedAt: new Date() })
+            .where(eq(confessions.id, pending.id));
         });
-        if (!review.ts) throw new Error("Slack returned no review timestamp");
-        await tx
-          .update(confessions)
-          .set({ reviewTs: review.ts, updatedAt: new Date() })
-          .where(eq(confessions.id, pending.id));
-      });
-    } catch {
-      await reply(
-        `Confession #${post.id} is saved, but review delivery is delayed. Moderators can recover it with /owl-revive.`,
-      );
-    }
-  });
+      } catch {
+        await reply(
+          `Confession #${post.id} is saved, but review delivery is delayed. Moderators can recover it with /owl-revive.`,
+        );
+      }
+    });
+  }
 }

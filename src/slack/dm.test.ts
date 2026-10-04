@@ -111,7 +111,13 @@ function harness(initialText = "A confession") {
     view: { id: "VKEY" },
   }));
   const viewUpdate = mock(async (_args: Record<string, unknown>) => ({ ok: true }));
-  const client = { chat: { postMessage, update }, views: { open, update: viewUpdate } };
+  const deleteMessage = mock(async (_args: Record<string, unknown>) => ({ ok: true }));
+  const addReaction = mock(async (_args: Record<string, unknown>) => ({ ok: true }));
+  const client = {
+    chat: { postMessage, update, delete: deleteMessage },
+    reactions: { add: addReaction },
+    views: { open, update: viewUpdate },
+  };
   const ack = mock(async () => {});
   registerDmHandlers(app as unknown as App, db as unknown as Database, config);
   const prompt = dmPrompt(initialText, "UAUTHOR", "DAUTHOR", "100.000001", config.signingSecret);
@@ -144,6 +150,7 @@ function harness(initialText = "A confession") {
     getPost: () => post,
     message: (event: Record<string, unknown>) => events.get("message")!({ event, client }),
     submit: () => actions.get("dm_submit")!({ ack, body, action, client }),
+    decline: () => actions.get("dm_decline")!({ ack, body, action, client }),
   };
 }
 
@@ -201,6 +208,78 @@ describe("DM messages", () => {
         text: expect.stringContaining("Malformed or unsupported"),
       }),
     );
+    expect(h.insert).not.toHaveBeenCalled();
+  });
+});
+
+describe("DM decline", () => {
+  test("offers a No button with signed context", () => {
+    const h = harness();
+    const block = h.body.message.blocks[3];
+    if (block?.type !== "actions") throw new Error("Missing actions");
+    expect(block.elements[1]).toEqual({
+      type: "button",
+      action_id: "dm_decline",
+      text: { type: "plain_text", text: "No, cancel" },
+      value: h.action.value,
+    });
+  });
+
+  test("deletes only the prompt and reacts to the original message without submitting", async () => {
+    const h = harness();
+    h.body.message.thread_ts = "90.000001";
+    await h.decline();
+    expect(h.ack).toHaveBeenCalledTimes(1);
+    expect(h.client.chat.delete).toHaveBeenCalledWith({
+      channel: "DAUTHOR",
+      ts: "100.000002",
+    });
+    expect(h.client.reactions.add).toHaveBeenCalledWith({
+      channel: "DAUTHOR",
+      timestamp: "100.000001",
+      name: "x",
+    });
+    expect(h.insert).not.toHaveBeenCalled();
+    expect(h.transaction).not.toHaveBeenCalled();
+    expect(h.client.chat.postMessage).not.toHaveBeenCalled();
+    expect(h.client.chat.update).not.toHaveBeenCalled();
+    expect(h.client.views.open).not.toHaveBeenCalled();
+  });
+
+  test.each(["user", "channel", "signature", "ts"])("rejects tampered %s", async (field) => {
+    const h = harness();
+    const context = JSON.parse(h.action.value!);
+    context[field] = "tampered";
+    h.action.value = JSON.stringify(context);
+    await h.decline();
+    expect(h.client.chat.delete).not.toHaveBeenCalled();
+    expect(h.client.reactions.add).not.toHaveBeenCalled();
+    expect(h.insert).not.toHaveBeenCalled();
+  });
+
+  test("ignores non-DM actions", async () => {
+    const h = harness();
+    h.body.channel.id = "COTHER";
+    await h.decline();
+    expect(h.ack).toHaveBeenCalledTimes(1);
+    expect(h.client.chat.delete).not.toHaveBeenCalled();
+    expect(h.client.reactions.add).not.toHaveBeenCalled();
+  });
+
+  test("tolerates retries after deletion and an existing reaction", async () => {
+    const h = harness();
+    h.client.chat.delete.mockRejectedValueOnce({ data: { error: "message_not_found" } });
+    h.client.reactions.add.mockRejectedValueOnce({ data: { error: "already_reacted" } });
+    await h.decline();
+    expect(h.client.reactions.add).toHaveBeenCalledTimes(1);
+    expect(h.insert).not.toHaveBeenCalled();
+  });
+
+  test("does not hide unexpected Slack failures", async () => {
+    const h = harness();
+    h.client.chat.delete.mockRejectedValueOnce(new Error("Slack unavailable"));
+    await expect(h.decline()).rejects.toThrow("Slack unavailable");
+    expect(h.client.reactions.add).not.toHaveBeenCalled();
     expect(h.insert).not.toHaveBeenCalled();
   });
 });
