@@ -15,6 +15,9 @@ COPY src ./src
 RUN ["bun", "node_modules/typescript/bin/tsc", "-p", "tsconfig.build.json"]
 
 FROM dhi.io/node:26-alpine AS runtime
+ARG SOURCE_COMMIT=unknown
+ARG COMMIT_SHA=$SOURCE_COMMIT
+ENV COMMIT_SHA=$COMMIT_SHA
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build --chown=1000:1000 /production/node_modules ./node_modules

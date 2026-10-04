@@ -1,9 +1,23 @@
 import bolt from "@slack/bolt";
+import { execFileSync } from "node:child_process";
 import type { Config } from "./config.js";
 import type { createDatabase } from "./db/client.js";
 import { registerHandlers } from "./slack/handlers.js";
 
 const { App, HTTPReceiver } = bolt;
+const commit = (() => {
+  if (process.env.COMMIT_SHA?.trim()) return process.env.COMMIT_SHA.trim();
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: new URL("..", import.meta.url),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return "unknown";
+  }
+})();
+
 export function createApp(
   config: Config,
   database: ReturnType<typeof createDatabase>,
@@ -35,6 +49,7 @@ export function createApp(
               ok: true,
               status: "healthy",
               proxin: true,
+              commit,
               uptime: Math.floor(process.uptime()),
             }),
           );

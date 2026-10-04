@@ -41,7 +41,7 @@ test("health reports total process uptime in whole seconds", () => {
           assert.equal(response.status, 200);
           assert.equal(response.headers.get("content-type"), "application/json");
           assert.deepEqual(await response.json(), {
-            ok: true, status: "healthy", proxin: true, uptime: 123,
+            ok: true, status: "healthy", proxin: true, commit: "test-commit", uptime: 123,
           });
           process.uptime = () => 125.1;
           assert.equal((await (await fetch(url)).json()).uptime, 125);
@@ -52,7 +52,7 @@ test("health reports total process uptime in whole seconds", () => {
         }
       `,
     ],
-    { encoding: "utf8" },
+    { encoding: "utf8", env: { ...process.env, COMMIT_SHA: "test-commit" } },
   );
   expect(result.stderr).toBe("");
   expect(result.status).toBe(0);
