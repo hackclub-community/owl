@@ -34,6 +34,7 @@ function harness(initialText = "A confession") {
     event: (name: string, handler: Handler) => events.set(name, handler),
     action: (name: string, handler: Handler) => actions.set(name, handler),
   };
+
   let post:
     | (Omit<Submission, "authorSalt" | "authorHash" | "authorHashVersion" | "replyKeyHash"> & {
         id: number;
@@ -45,6 +46,7 @@ function harness(initialText = "A confession") {
         replyKeyHash: string | null;
       })
     | undefined;
+
   const insert = mock((_table: unknown) => ({
     values: (values: Submission) => ({
       onConflictDoNothing: (_options: unknown) => ({
@@ -65,6 +67,7 @@ function harness(initialText = "A confession") {
       }),
     }),
   }));
+
   const findFirst = mock(async (_options: unknown) => post);
   const tx = {
     select: () => ({
@@ -82,14 +85,27 @@ function harness(initialText = "A confession") {
       }),
     }),
   };
+
   const transaction = mock(async (callback: (value: typeof tx) => Promise<void>) => callback(tx));
-  const db = { insert, query: { confessions: { findFirst } }, transaction };
+  const remove = mock((_table: unknown) => ({
+    where: async (_condition: unknown) => {
+      if (post?.status === "pending" && !post.reviewTs) post = undefined;
+    },
+  }));
+
+  const db = { insert, delete: remove, query: { confessions: { findFirst } }, transaction };
   const postMessage = mock(async (_args: Record<string, unknown>) => ({
     ok: true,
     ts: "200.000001",
   }));
   const update = mock(async (_args: Record<string, unknown>) => ({ ok: true }));
-  const client = { chat: { postMessage, update } };
+
+  const open = mock(async (_args: Record<string, unknown>) => ({
+    ok: true,
+    view: { id: "VKEY" },
+  }));
+  const viewUpdate = mock(async (_args: Record<string, unknown>) => ({ ok: true }));
+  const client = { chat: { postMessage, update }, views: { open, update: viewUpdate } };
   const ack = mock(async () => {});
   registerDmHandlers(app as unknown as App, db as unknown as Database, config);
   const prompt = dmPrompt(initialText, "UAUTHOR", "DAUTHOR", "100.000001", config.signingSecret);
@@ -97,21 +113,26 @@ function harness(initialText = "A confession") {
   if (buttonBlock?.type !== "actions") throw new Error("Missing submit actions");
   const button = buttonBlock.elements[0];
   if (button?.type !== "button") throw new Error("Missing submit button");
+
   const body = {
     user: { id: "UAUTHOR" },
+    trigger_id: "TRIGGER",
     channel: { id: "DAUTHOR" },
     message: { ts: "100.000002", thread_ts: "100.000001", blocks: prompt },
     state: {
       values: { dm_ownership: { dm_passphrase: { selected_options: [] as { value: string }[] } } },
     },
   };
+
   const action = { value: button.value };
+
   return {
     body,
     action,
     ack,
     client,
     insert,
+    remove,
     findFirst,
     transaction,
     getPost: () => post,
@@ -216,18 +237,83 @@ describe("DM confirmation", () => {
     expect(post.reviewTs).toBe("200.000001");
   });
 
-  test("passphrase mode saves only a hash and reveals the key privately", async () => {
+  const keyMode = () => {
     const h = harness();
     h.body.state.values.dm_ownership.dm_passphrase.selected_options = [{ value: "passphrase" }];
+    return h;
+  };
+  const shownKey = (h: ReturnType<typeof harness>) =>
+    JSON.stringify(h.client.views.update.mock.calls[0]?.[0]).match(
+      /Your private reply key:\\n([a-f0-9]{64})/,
+    )?.[1];
+
+  test("passphrase mode saves only a hash and shows the key in a modal only", async () => {
+    const h = keyMode();
     await h.submit();
     const post = h.getPost()!;
     expect(post.authorSalt).toBeNull();
     expect(post.authorHash).toBeNull();
-    const confirmation = JSON.stringify(h.client.chat.update.mock.calls[0]![0]);
-    const key = confirmation.match(/Your private reply key:\\n([a-f0-9]{64})/)?.[1];
+    expect(h.client.views.open).toHaveBeenCalledWith(
+      expect.objectContaining({ trigger_id: "TRIGGER" }),
+    );
+    expect(h.client.views.update).toHaveBeenCalledWith(
+      expect.objectContaining({ view_id: "VKEY" }),
+    );
+    const key = shownKey(h);
     expect(key).toBeDefined();
     expect(post.replyKeyHash).toBe(hashReplyKey(key!, "UAUTHOR"));
+    // we are not storing keys in dms yay!
+    expect(JSON.stringify(h.client.chat.update.mock.calls)).not.toContain(key!);
     expect(JSON.stringify(h.client.chat.postMessage.mock.calls)).not.toContain(key!);
+  });
+
+  test("passphrase keys are random, not derived from the submission", async () => {
+    const first = keyMode();
+    const second = keyMode();
+    await first.submit();
+    await second.submit();
+    expect(first.getPost()!.submissionId).toBe(second.getPost()!.submissionId);
+    expect(shownKey(first)).not.toBe(shownKey(second));
+  });
+
+  test("duplicate passphrase clicks never show a key again", async () => {
+    const h = keyMode();
+    await h.submit();
+    await h.submit();
+    const second = JSON.stringify(h.client.views.update.mock.calls[1]?.[0]);
+    expect(second).toContain("only shown the first time");
+    expect(second).not.toMatch(/[a-f0-9]{64}/);
+    expect(h.client.chat.postMessage).toHaveBeenCalledTimes(1);
+  });
+
+  test("passphrase mode saves nothing when the key modal cannot open", async () => {
+    const h = keyMode();
+    h.client.views.open.mockRejectedValueOnce(new Error("expired_trigger_id"));
+    await h.submit();
+    expect(h.insert).not.toHaveBeenCalled();
+    expect(h.client.chat.update).not.toHaveBeenCalled();
+    expect(h.client.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining("Press the button again") }),
+    );
+  });
+
+  test("passphrase mode drops the post when the key cannot be shown", async () => {
+    const h = keyMode();
+    h.client.views.update.mockRejectedValueOnce(new Error("Slack unavailable"));
+    await h.submit();
+    expect(h.remove).toHaveBeenCalledTimes(1);
+    expect(h.getPost()).toBeUndefined();
+    expect(h.transaction).not.toHaveBeenCalled();
+    expect(h.client.chat.update).not.toHaveBeenCalled();
+    expect(h.client.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining("nothing was submitted") }),
+    );
+  });
+
+  test("account mode does not open a modal", async () => {
+    const h = harness();
+    await h.submit();
+    expect(h.client.views.open).not.toHaveBeenCalled();
   });
 
   test.each(["user", "channel", "signature", "preview", "version", "json"] as const)(

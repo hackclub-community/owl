@@ -150,6 +150,14 @@ export function confirmationView(id: number, key: string | null): ModalView {
     ],
   };
 }
+export function noticeView(title: string, text: string): ModalView {
+  return {
+    type: "modal",
+    title: plain(title),
+    close: plain("Close"),
+    blocks: [{ type: "section", text: plain(text) }],
+  };
+}
 export function replyView(channel: string, ts: string): ModalView {
   return {
     type: "modal",

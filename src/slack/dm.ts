@@ -5,9 +5,9 @@ import { and, eq, isNull } from "drizzle-orm";
 import type { Config } from "../config.js";
 import type { Database } from "../db/client.js";
 import { confessions } from "../db/schema.js";
-import { authorCredential, hashReplyKey, matchesHash, ownsPost } from "./security.js";
+import { authorCredential, hashReplyKey, matchesHash, newReplyKey } from "./security.js";
 import { contentFromBlocks, contentFromText, MAX_TEXT, type Content } from "./content.js";
-import { reviewBlocks } from "./views.js";
+import { confirmationView, noticeView, reviewBlocks } from "./views.js";
 
 const plain = (text: string) => ({ type: "plain_text" as const, text });
 const digest = (secret: string, purpose: string, parts: string[]) =>
@@ -169,12 +169,29 @@ export function registerDmHandlers(app: App, db: Database, config: Config) {
       return;
     }
     const submissionId = `dm:${context.signature}`;
-    const privateKey = digest(config.signingSecret, "dm-reply-key", [submissionId]);
     const useKey =
       body.state?.values.dm_ownership?.dm_passphrase?.selected_options?.some(
         (option) => option.value === "passphrase",
       ) ?? false;
+    let keyView: string | undefined;
+    if (useKey) {
+      try {
+        const opened = await client.views.open({
+          trigger_id: body.trigger_id,
+          view: noticeView("Submitting…", "Generating your private reply key…"),
+        });
+        keyView = opened.view?.id;
+        if (!keyView) throw new Error("Slack returned no view id");
+      } catch {
+        await reply("Something broke, hit the button to retry it?");
+        return;
+      }
+    }
+    const showKey = (view: Parameters<typeof client.views.update>[0]["view"]) =>
+      client.views.update({ view_id: keyView!, view });
+    const privateKey = useKey ? newReplyKey() : null;
     let post;
+    let inserted = false;
     try {
       [post] = await db
         .insert(confessions)
@@ -183,32 +200,68 @@ export function registerDmHandlers(app: App, db: Database, config: Config) {
           text: content.text,
           content: content.block,
           postChannel: config.channels.post,
-          ...(useKey
+          ...(privateKey
             ? { replyKeyHash: hashReplyKey(privateKey, body.user.id) }
             : await authorCredential(body.user.id, config.pepper)),
         })
         .onConflictDoNothing({ target: confessions.submissionId })
         .returning();
+      inserted = !!post;
+      // because this can get double fired (fuck slack lol)
       post ??= await db.query.confessions.findFirst({
         where: eq(confessions.submissionId, submissionId),
       });
-      if (!post || !(await ownsPost(post, body.user.id, privateKey, config.pepper)))
-        throw new Error("Unavailable submission");
+      if (!post) throw new Error("Unavailable submission");
     } catch {
+      if (keyView)
+        await showKey(noticeView("Not submitted", "Nothing was saved. Please try again.")).catch(
+          () => {},
+        );
       await reply("Could not submit this confession. Please try again, or use `/owl`.");
       return;
     }
-    const confirmation =
-      post.status === "pending"
-        ? `Confession #${post.id} submitted and awaiting review.`
-        : `Confession #${post.id} was already submitted (${post.status}).`;
+    const confirmation = inserted
+      ? `Confession #${post.id} submitted and awaiting review.`
+      : `Confession #${post.id} was already submitted (${post.status}).`;
+    if (keyView) {
+      try {
+        await showKey(
+          inserted && privateKey
+            ? confirmationView(post.id, privateKey)
+            : noticeView(
+                "Already submitted",
+                post.replyKeyHash
+                  ? `${confirmation} Its private reply key was only shown the first time.`
+                  : `${confirmation} It uses your account hash, so no key is needed.`,
+              ),
+        );
+      } catch {
+        // nobody has the key, so drop the post before it reaches review
+        if (inserted) {
+          await db
+            .delete(confessions)
+            .where(
+              and(
+                eq(confessions.id, post.id),
+                eq(confessions.status, "pending"),
+                isNull(confessions.reviewTs),
+              ),
+            )
+            .catch(() => {});
+          await reply(
+            "Could not properly generate your key, so nothing was submitted. Please try again. :(",
+          );
+          return;
+        }
+      }
+    }
     const blocks: KnownBlock[] = [
       { type: "section", text: plain(confirmation) },
       {
         type: "section",
         text: plain(
           post.replyKeyHash
-            ? `Your private reply key:\n${privateKey}\n\nYou should save it now. Replies, reactions, and withdrawal require this key and this Slack account.`
+            ? "Your private reply key was shown once in a popup and is not stored in this chat. Replies, reactions, and withdrawal require that key and this Slack account."
             : "Your Slack account will be recognized through its salted hash. No reply key is needed.",
         ),
       },
