@@ -188,7 +188,12 @@ export function decisionBlocks(
   revision: number,
   warning?: string | null,
   block?: unknown,
+  links: { postChannel?: string; logUrl?: string; postUrl?: string } = {},
 ): KnownBlock[] {
+  const status =
+    verdict === "accepted"
+      ? `Approved${links.postChannel ? ` to <#${links.postChannel}>` : ""}`
+      : "Rejected";
   return [
     ...contentBlocks(storedContent(text, block), `Anonymous post #${id}`),
     {
@@ -196,8 +201,14 @@ export function decisionBlocks(
       elements: [
         {
           type: "mrkdwn",
-          text: `Post #${id} ${verdict} by <@${userId}>${warning ? ` — TW - ${escapeSlackText(warning)}` : ""}`,
+          text: `Post #${id} ${status} by <@${userId}>${warning ? ` — TW - ${escapeSlackText(warning)}` : ""}`,
         },
+        ...(links.logUrl
+          ? [{ type: "mrkdwn" as const, text: `<${links.logUrl}|View community log>` }]
+          : []),
+        ...(verdict === "accepted" && links.postUrl
+          ? [{ type: "mrkdwn" as const, text: `<${links.postUrl}|View posted message>` }]
+          : []),
       ],
     },
     {

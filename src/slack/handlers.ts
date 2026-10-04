@@ -473,10 +473,32 @@ export function registerHandlers(app: App, db: Database, config: Config) {
         )
         .for("update");
       if (!current?.text) return;
+      const logVerdict = accepting ? `approved to <#${current.postChannel}>` : "rejected";
+      const log = await client.chat.postMessage({
+        channel: config.channels.log,
+        text: `Confession *#${id}* was *${logVerdict}*`,
+        mrkdwn: true,
+        parse: "none",
+        link_names: false,
+      });
+      async function permalink(channel: string, ts?: string | null) {
+        if (!ts) return undefined;
+        try {
+          const result = await client.chat.getPermalink({ channel, message_ts: ts });
+          return result.permalink;
+        } catch (error) {
+          console.error("cant get decision message permalink? Somethings wrong...", error);
+          return undefined;
+        }
+      }
+      const [logUrl, postUrl] = await Promise.all([
+        permalink(config.channels.log, log.ts),
+        accepting ? permalink(current.postChannel, current.postTs) : undefined,
+      ]);
       await client.chat.update({
         channel: config.channels.review,
         ts: reviewTs,
-        text: `Post #${id} ${verdict}`,
+        text: `Post #${id} ${accepting ? `Approved to <#${current.postChannel}>` : "Rejected"}`,
         blocks: decisionBlocks(
           id,
           current.text,
@@ -485,20 +507,9 @@ export function registerHandlers(app: App, db: Database, config: Config) {
           reviewedAt.getTime(),
           warning,
           current.content,
+          { postChannel: current.postChannel, logUrl, postUrl },
         ),
       });
-    });
-    const logVerdict = accepting
-      ? postChannel === config.channels.meta
-        ? "approved for meta"
-        : "approved"
-      : "rejected";
-    await client.chat.postMessage({
-      channel: config.channels.log,
-      text: `Confession *#${id}* was *${logVerdict}*`,
-      mrkdwn: true,
-      parse: "none",
-      link_names: false,
     });
     return true;
   }
