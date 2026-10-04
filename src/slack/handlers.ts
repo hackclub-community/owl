@@ -1,18 +1,14 @@
 import type { App, BlockAction, ButtonAction, MessageShortcut } from "@slack/bolt";
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { Client } from "pg";
+import { publish, publicationLink, type Recovery } from "./publication.js";
 import type { WebClient } from "@slack/web-api";
 import type { Config } from "../config.js";
 import type { Database } from "../db/client.js";
 import { confessions, replies } from "../db/schema.js";
 import { authorCredential, hashReplyKey, newReplyKey, ownsPost } from "./security.js";
 import { registerDmHandlers } from "./dm.js";
-import {
-  contentBlocks,
-  contentFromText,
-  inputContent,
-  storedContent,
-  type Content,
-} from "./content.js";
+import { contentBlocks, inputContent, storedContent, type Content } from "./content.js";
 import {
   approveTwView,
   confirmationView,
@@ -21,6 +17,7 @@ import {
   MAX_TEXT,
   postView,
   reactionView,
+  recoveryView,
   replyView,
   reviewBlocks,
   withdrawView,
@@ -36,6 +33,107 @@ function slackError(error: unknown, code: string) {
 
 export function registerHandlers(app: App, db: Database, config: Config) {
   registerDmHandlers(app, db, config);
+  async function publicationLock<T>(id: number, work: () => Promise<T>) {
+    const connection = new Client({
+      connectionString: config.databaseUrl,
+      connectionTimeoutMillis: 1000,
+      statement_timeout: 1500,
+    });
+    await connection.connect();
+    let locked = false;
+    try {
+      const result = await connection.query("SELECT pg_try_advisory_lock(40442, $1) AS locked", [
+        id,
+      ]);
+      locked = result.rows[0].locked;
+      if (!locked) return undefined;
+      return await work();
+    } finally {
+      // Closing this dedicated session releases its advisory lock even after an error.
+      await connection.end();
+    }
+  }
+  async function resume(id: number, reviewer: string, client: WebClient, recovery: Recovery) {
+    const post = await db.query.confessions.findFirst({ where: eq(confessions.id, id) });
+    if (!post || post.status !== "publishing") return;
+    const progress = await publish(post, client, async (progress) => {
+      await db.update(confessions).set(progress).where(eq(confessions.id, id));
+    }, recovery);
+    if (post.reviewTs) await client.chat.update({
+      channel: config.channels.review, ts: post.reviewTs,
+      text: `Post #${id} accepted`,
+      blocks: decisionBlocks(id, post.text, "accepted", reviewer,
+        post.updatedAt.getTime(), post.warning, post.content),
+    });
+    await client.chat.postMessage({ channel: config.channels.log,
+      text: `Confession #${id} approval recovered by <@${reviewer}>` });
+    await db.update(confessions).set({ status: "accepted", ...progress })
+      .where(eq(confessions.id, id));
+  }
+
+  app.view("recover_approval_view", async ({ ack, body, view, client }) => {
+    let context: { id: number; revision: number };
+    try {
+      context = JSON.parse(view.private_metadata);
+      if (!Number.isSafeInteger(context.id) || context.id < 1 || !Number.isSafeInteger(context.revision))
+        throw new Error("Invalid recovery context");
+    } catch {
+      await ack({ response_action: "errors", errors: { post: "Reopen recovery with /owl-revive <id>." } });
+      return;
+    }
+    const post = await db.query.confessions.findFirst({ where: eq(confessions.id, context.id) });
+    if (!post || post.status !== "publishing" || post.updatedAt.getTime() !== context.revision) {
+      await ack();
+      return;
+    }
+    const recovery: Recovery = {};
+    const errors: Record<string, string> = {};
+    for (const step of ["post", "content"] as const) {
+      if (step === "content" && !post.warning) continue;
+      if (step === "post" ? post.postTs : post.contentTs) continue;
+      const link = view.state.values[step]?.link?.value?.trim() ?? "";
+      const retry = view.state.values[`${step}_retry`]?.retry?.selected_options?.length === 1;
+      if (Boolean(link) === retry) {
+        errors[step] = "Provide the existing message link OR confirm it was not posted.";
+        continue;
+      }
+      if (retry) {
+        if (step === "post") recovery.retryPost = true;
+        else recovery.retryContent = true;
+      } else {
+        try {
+          if (step === "post") recovery.postTs = publicationLink(link, post.postChannel);
+          else {
+            const parent = post.postTs ?? recovery.postTs;
+            if (!parent) throw new Error("Provide the existing main message link first.");
+            recovery.contentTs = publicationLink(link, post.postChannel, parent);
+          }
+        } catch {
+          errors[step] = step === "post"
+            ? "Use the confession's main message link from its destination channel."
+            : "Use the TW content reply link from the matching confession thread.";
+        }
+      }
+    }
+    if (Object.keys(errors).length) {
+      await ack({ response_action: "errors", errors });
+      return;
+    }
+    await ack();
+    try {
+      await publicationLock(post.id, async () => {
+        const current = await db.query.confessions.findFirst({ where: eq(confessions.id, post.id) });
+        if (!current || current.status !== "publishing" || current.updatedAt.getTime() !== context.revision) return;
+        // Another recovery may have saved a different parent since the form opened.
+        if (recovery.contentTs && current.postTs && current.postTs !== (post.postTs ?? recovery.postTs))
+          throw new Error("Publication changed; reopen recovery");
+        await resume(post.id, body.user.id, client, recovery);
+      });
+    } catch {
+      await client.chat.postEphemeral({ channel: config.channels.review, user: body.user.id,
+        text: `Recovery of #${post.id} could not be confirmed. Inspect the destination and reopen /owl-revive ${post.id}; a message may already have been delivered.` });
+    }
+  });
   const cleared = () => ({
     status: "rejected" as const,
     text: "",
@@ -174,6 +272,37 @@ export function registerHandlers(app: App, db: Database, config: Config) {
       });
       return;
     }
+    if (command.text.trim()) {
+      const id = Number(command.text.trim());
+      const post = Number.isSafeInteger(id) && id > 0
+        ? await db.query.confessions.findFirst({ where: eq(confessions.id, id) }) : undefined;
+      if (!post || post.status !== "publishing") {
+        await respond({ response_type: "ephemeral", text: "Use /owl-revive <id> for an interrupted approval." });
+        return;
+      }
+      await client.views.open({ trigger_id: command.trigger_id, view: recoveryView(post) });
+      return;
+    }
+    const interrupted = await db
+      .select({ id: confessions.id })
+      .from(confessions)
+      .where(eq(confessions.status, "publishing"))
+      .orderBy(asc(confessions.id))
+      .limit(50);
+    let recovered = 0;
+    const failed: number[] = [];
+    for (const row of interrupted) {
+      try {
+        await publicationLock(row.id, async () => {
+          const post = await db.query.confessions.findFirst({ where: eq(confessions.id, row.id) });
+          if (!post || post.status !== "publishing") return;
+          await resume(post.id, command.user_id, client, {});
+          recovered++;
+        });
+      } catch {
+        failed.push(row.id);
+      }
+    }
     const rows = await db
       .select({ id: confessions.id })
       .from(confessions)
@@ -212,7 +341,7 @@ export function registerHandlers(app: App, db: Database, config: Config) {
     }
     await respond({
       response_type: "ephemeral",
-      text: `recovered ${count} pending review message(s).`,
+      text: `Recovered ${count} pending review message(s) and ${recovered} interrupted approval(s).${failed.length ? ` Could not recover #${failed.join(", #")}; inspect the destination and use /owl-revive <id> to resolve missing message timestamps.` : ""}`,
     });
   });
 
@@ -396,7 +525,7 @@ export function registerHandlers(app: App, db: Database, config: Config) {
       .where(eq(confessions.id, confession.id));
   });
 
-  async function decide(
+  async function decideUnlocked(
     id: number,
     reviewTs: string,
     userId: string,
@@ -423,40 +552,12 @@ export function registerHandlers(app: App, db: Database, config: Config) {
       .returning();
     if (!confession) return false;
     if (accepting) {
-      const content = storedContent(confession.text, confession.content);
-      const top = warning ? contentFromText(`TW - ${warning}`) : content;
-      const published = await client.chat.postMessage({
-        channel: confession.postChannel,
-        text: messageFallback(`${id}: ${top.text}`),
-        mrkdwn: false,
-        parse: "none",
-        link_names: false,
-        blocks: contentBlocks(top, String(id), true),
-        unfurl_links: false,
-        unfurl_media: false,
+      const progress = await publish(confession, client, async (progress) => {
+        await db.update(confessions).set(progress).where(eq(confessions.id, id));
       });
-      if (!published.ts) throw new Error("Slack returned no publication timestamp");
-      await db.update(confessions).set({ postTs: published.ts }).where(eq(confessions.id, id));
-      let contentTs: string | null = null;
-      if (warning) {
-        const reply = await client.chat.postMessage({
-          channel: confession.postChannel,
-          thread_ts: published.ts,
-          reply_broadcast: false,
-          text: messageFallback(content.text),
-          mrkdwn: false,
-          parse: "none",
-          link_names: false,
-          blocks: contentBlocks(content),
-          unfurl_links: false,
-          unfurl_media: false,
-        });
-        if (!reply.ts) throw new Error("Slack returned no content timestamp");
-        contentTs = reply.ts;
-      }
       await db
         .update(confessions)
-        .set({ status: "accepted", contentTs, postTs: published.ts, updatedAt: reviewedAt })
+        .set({ ...progress, updatedAt: reviewedAt })
         .where(eq(confessions.id, id));
     }
     const verdict = accepting ? "accepted" : "rejected";
@@ -467,7 +568,7 @@ export function registerHandlers(app: App, db: Database, config: Config) {
         .where(
           and(
             eq(confessions.id, id),
-            eq(confessions.status, verdict),
+            eq(confessions.status, accepting ? "publishing" : verdict),
             eq(confessions.updatedAt, reviewedAt),
           ),
         )
@@ -487,6 +588,8 @@ export function registerHandlers(app: App, db: Database, config: Config) {
           current.content,
         ),
       });
+      if (accepting)
+        await tx.update(confessions).set({ status: "accepted" }).where(eq(confessions.id, id));
     });
     const logVerdict = accepting
       ? postChannel === config.channels.meta
@@ -501,6 +604,10 @@ export function registerHandlers(app: App, db: Database, config: Config) {
       link_names: false,
     });
     return true;
+  }
+
+  async function decide(...args: Parameters<typeof decideUnlocked>) {
+    return publicationLock(args[0], () => decideUnlocked(...args));
   }
 
   for (const actionId of ["accept_confession", "accept_meta", "reject_confession"] as const) {
