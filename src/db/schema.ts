@@ -28,6 +28,7 @@ export const confessions = pgTable(
     text: text("text").notNull(),
     content: jsonb("content").$type<RichTextBlock>(),
     replyKeyHash: text("reply_key_hash").unique(),
+    replyKeyHashVersion: smallint("reply_key_hash_version").notNull().default(1),
     authorSalt: text("author_salt"),
     authorHash: text("author_hash"),
     authorHashVersion: smallint("author_hash_version").notNull().default(1),

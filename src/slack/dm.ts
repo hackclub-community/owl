@@ -5,7 +5,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import type { Config } from "../config.js";
 import type { Database } from "../db/client.js";
 import { confessions } from "../db/schema.js";
-import { authorCredential, hashReplyKey, matchesHash, newReplyKey } from "./security.js";
+import { authorCredential, matchesHash, newReplyKey, replyKeyCredential } from "./security.js";
 import { contentFromBlocks, contentFromText, MAX_TEXT, type Content } from "./content.js";
 import { confirmationView, noticeView, reviewBlocks } from "./views.js";
 
@@ -201,7 +201,7 @@ export function registerDmHandlers(app: App, db: Database, config: Config) {
           content: content.block,
           postChannel: config.channels.post,
           ...(privateKey
-            ? { replyKeyHash: hashReplyKey(privateKey, body.user.id) }
+            ? await replyKeyCredential(privateKey, body.user.id, config.pepper)
             : await authorCredential(body.user.id, config.pepper)),
         })
         .onConflictDoNothing({ target: confessions.submissionId })

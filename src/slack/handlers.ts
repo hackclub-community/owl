@@ -4,7 +4,7 @@ import type { WebClient } from "@slack/web-api";
 import type { Config } from "../config.js";
 import type { Database } from "../db/client.js";
 import { confessions, replies } from "../db/schema.js";
-import { authorCredential, hashReplyKey, newReplyKey, ownsPost } from "./security.js";
+import { authorCredential, newReplyKey, ownsPost, replyKeyCredential } from "./security.js";
 import { registerDmHandlers } from "./dm.js";
 import {
   contentBlocks,
@@ -364,7 +364,7 @@ export function registerHandlers(app: App, db: Database, config: Config) {
           text: content.text,
           content: content.block,
           ...(key
-            ? { replyKeyHash: hashReplyKey(key, body.user.id) }
+            ? await replyKeyCredential(key, body.user.id, config.pepper)
             : await authorCredential(body.user.id, config.pepper)),
           postChannel: config.channels.post,
         })

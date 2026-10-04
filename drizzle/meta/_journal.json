@@ -57,6 +57,13 @@
       "when": 1791089240446,
       "tag": "0007_author_hash_version",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791129403415,
+      "tag": "0008_reply_key_hash_version",
+      "breakpoints": true
     }
   ]
 }

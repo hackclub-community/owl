@@ -3,7 +3,7 @@ import type { App } from "@slack/bolt";
 import type { Config } from "../config.js";
 import type { Database } from "../db/client.js";
 import { dmPrompt, registerDmHandlers } from "./dm.js";
-import { hashReplyKey, ownsPost } from "./security.js";
+import { hashReplyKey, ownsPost, REPLY_KEY_HASH_VERSION } from "./security.js";
 import { MAX_TEXT } from "./content.js";
 
 const config: Config = {
@@ -25,6 +25,7 @@ type Submission = {
   authorHash?: string;
   authorHashVersion?: number;
   replyKeyHash?: string;
+  replyKeyHashVersion?: number;
 };
 
 function harness(initialText = "A confession") {
@@ -36,7 +37,10 @@ function harness(initialText = "A confession") {
   };
 
   let post:
-    | (Omit<Submission, "authorSalt" | "authorHash" | "authorHashVersion" | "replyKeyHash"> & {
+    | (Omit<
+        Submission,
+        "authorSalt" | "authorHash" | "authorHashVersion" | "replyKeyHash" | "replyKeyHashVersion"
+      > & {
         id: number;
         status: string;
         reviewTs: string | null;
@@ -44,6 +48,7 @@ function harness(initialText = "A confession") {
         authorHash: string | null;
         authorHashVersion: number;
         replyKeyHash: string | null;
+        replyKeyHashVersion: number;
       })
     | undefined;
 
@@ -57,6 +62,7 @@ function harness(initialText = "A confession") {
             authorHash: null,
             authorHashVersion: 1,
             replyKeyHash: null,
+            replyKeyHashVersion: 1,
             ...values,
             id: 67,
             status: "pending",
@@ -261,7 +267,8 @@ describe("DM confirmation", () => {
     );
     const key = shownKey(h);
     expect(key).toBeDefined();
-    expect(post.replyKeyHash).toBe(hashReplyKey(key!, "UAUTHOR"));
+    expect(post.replyKeyHash).toBe(await hashReplyKey(key!, "UAUTHOR", config.pepper));
+    expect(post.replyKeyHashVersion).toBe(REPLY_KEY_HASH_VERSION);
     // we are not storing keys in dms yay!
     expect(JSON.stringify(h.client.chat.update.mock.calls)).not.toContain(key!);
     expect(JSON.stringify(h.client.chat.postMessage.mock.calls)).not.toContain(key!);
