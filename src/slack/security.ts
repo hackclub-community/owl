@@ -6,17 +6,12 @@ export const AUTHOR_HASH_VERSION = 2;
 export const REPLY_KEY_HASH_VERSION = 2;
 export const REPLY_KEY_SALT = "owl:reply-key";
 const SCRYPT = { N: 2 ** 15, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
+const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
 export const newReplyKey = () => randomBytes(32).toString("hex");
-export const legacyReplyKeyHash = (key: string, userId: string) =>
-  createHash("sha256").update(`${key}:${userId}`).digest("hex");
 
-export function legacyAuthorHash(userId: string, salt: string) {
-  return createHash("sha256").update(`${salt}:${userId}`).digest("hex");
-}
-
-export function pepperHash(legacyHash: string, salt: string, pepper: string) {
-  const keyed = createHmac("sha256", pepper).update(legacyHash).digest();
+export function pepperHash(digest: string, salt: string, pepper: string) {
+  const keyed = createHmac("sha256", pepper).update(digest).digest();
   return new Promise<string>((resolve, reject) =>
     scrypt(keyed, salt, 32, SCRYPT, (error, hash) =>
       error ? reject(error) : resolve(hash.toString("hex")),
@@ -25,11 +20,11 @@ export function pepperHash(legacyHash: string, salt: string, pepper: string) {
 }
 
 export function hashAuthor(userId: string, salt: string, pepper: string) {
-  return pepperHash(legacyAuthorHash(userId, salt), salt, pepper);
+  return pepperHash(sha256(`${salt}:${userId}`), salt, pepper);
 }
 
 export function hashReplyKey(key: string, userId: string, pepper: string) {
-  return pepperHash(legacyReplyKeyHash(key, userId), REPLY_KEY_SALT, pepper);
+  return pepperHash(sha256(`${key}:${userId}`), REPLY_KEY_SALT, pepper);
 }
 
 export async function replyKeyCredential(key: string, userId: string, pepper: string) {
@@ -65,17 +60,15 @@ export async function ownsPost(
   key: string,
   pepper: string,
 ) {
+  // we killed the unsecure v1 stuff so we only accept v2. good for security!
   if (post.authorSalt && post.authorHash) {
-    const hash =
-      post.authorHashVersion === AUTHOR_HASH_VERSION
-        ? await hashAuthor(userId, post.authorSalt, pepper)
-        : legacyAuthorHash(userId, post.authorSalt);
-    return matchesHash(hash, post.authorHash);
+    return (
+      post.authorHashVersion === AUTHOR_HASH_VERSION &&
+      matchesHash(await hashAuthor(userId, post.authorSalt, pepper), post.authorHash)
+    );
   }
-  if (!key || !post.replyKeyHash) return false;
-  const hash =
-    post.replyKeyHashVersion === REPLY_KEY_HASH_VERSION
-      ? await hashReplyKey(key, userId, pepper)
-      : legacyReplyKeyHash(key, userId);
-  return matchesHash(hash, post.replyKeyHash);
+  if (!key || !post.replyKeyHash || post.replyKeyHashVersion !== REPLY_KEY_HASH_VERSION) {
+    return false;
+  }
+  return matchesHash(await hashReplyKey(key, userId, pepper), post.replyKeyHash);
 }
