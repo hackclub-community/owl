@@ -293,7 +293,7 @@ describe("DM confirmation", () => {
     expect(h.insert).not.toHaveBeenCalled();
     expect(h.client.chat.update).not.toHaveBeenCalled();
     expect(h.client.chat.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining("Press the button again") }),
+      expect.objectContaining({ text: expect.stringContaining("hit the button to retry it?") }),
     );
   });
 
