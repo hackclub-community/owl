@@ -39,6 +39,7 @@ const messageInput = (label: string, initialText = ""): InputBlock => ({
   element: {
     type: "rich_text_input",
     action_id: "text",
+    focus_on_load: true,
     ...(initialText.trim() ? { initial_value: contentFromText(initialText).block } : {}),
   },
 });
@@ -253,65 +254,4 @@ export function reviewBlocks(id: number, text: string, block?: unknown): KnownBl
       ],
     },
   ];
-}
-
-export function recoveryView(post: {
-  id: number;
-  postTs: string | null;
-  contentTs: string | null;
-  warning: string | null;
-  postChannel: string;
-  updatedAt: Date;
-}): ModalView {
-  const blocks: KnownBlock[] = [
-    {
-      type: "section",
-      text: plain(
-        `Recover confession #${post.id} in channel ${post.postChannel}. Inspect that channel and the confession thread first. Owl cannot read channel history. For each missing timestamp, paste the matching message link or confirm that it was never posted. Confirming incorrectly can create a duplicate.`,
-      ),
-    },
-  ];
-  for (const step of ["post", "content"] as const) {
-    if (step === "content" && !post.warning) continue;
-    const ts = step === "post" ? post.postTs : post.contentTs;
-    const label = step === "post" ? "Main confession message" : "TW content reply";
-    if (ts) {
-      blocks.push({ type: "section", text: plain(`${label}: timestamp saved; will reuse it.`) });
-      continue;
-    }
-    blocks.push(
-      {
-        type: "input",
-        block_id: step,
-        label: plain(`${label} link`),
-        optional: true,
-        element: { type: "plain_text_input", action_id: "link", max_length: 500 },
-      },
-      {
-        type: "input",
-        block_id: `${step}_retry`,
-        label: plain(`Retry ${label.toLowerCase()}`),
-        optional: true,
-        element: {
-          type: "checkboxes",
-          action_id: "retry",
-          options: [
-            {
-              value: "retry",
-              text: plain("I checked Slack: this message was never posted. Send it now."),
-            },
-          ],
-        },
-      },
-    );
-  }
-  return {
-    type: "modal",
-    callback_id: "recover_approval_view",
-    title: plain("Recover approval"),
-    private_metadata: JSON.stringify({ id: post.id, revision: post.updatedAt.getTime() }),
-    submit: plain("Recover"),
-    close: plain("Cancel"),
-    blocks,
-  };
 }
