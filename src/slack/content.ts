@@ -10,6 +10,15 @@ export const MAX_TEXT = 12_000;
 export const MAX_BLOCK_TEXT = 2800;
 export const MAX_CONTENT_BYTES = 48 * 1024;
 
+const HIDDEN =
+  /(\p{RGI_Emoji})|[\p{Default_Ignorable_Code_Point}\p{Cf}\p{Co}\p{Cn}[\p{Cc}--[\t\n]]]/gv;
+export const revealHidden = (text: string) =>
+  text.replace(
+    HIDDEN,
+    (match, emoji?: string) =>
+      emoji ?? `[U+${match.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}]`,
+  );
+
 const invalid = (): never => {
   throw new Error("invalid or unsupported rich-text content");
 };
@@ -72,10 +81,10 @@ function inline(value: unknown): RichTextElement {
   const styled = formatting ? { style: formatting } : {};
   switch (node.type) {
     case "text":
-      return { type: "text", text: string(node.text), ...styled };
+      return { type: "text", text: revealHidden(string(node.text)), ...styled };
     case "link": {
       const url = string(node.url);
-      const text = node.text === undefined ? undefined : string(node.text);
+      const text = node.text === undefined ? undefined : revealHidden(string(node.text));
       if (!safeURL(url)) return { type: "text", text: text ?? url, ...styled };
       return { type: "link", url, ...(text === undefined ? {} : { text }), ...styled };
     }

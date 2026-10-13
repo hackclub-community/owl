@@ -433,3 +433,20 @@ describe("input, storage and headings", () => {
     expect(() => contentBlocks(large, "a".repeat(MAX_BLOCK_TEXT))).toThrow(byteError);
   });
 });
+
+describe("hidden characters", () => {
+  test.each([
+    ["a\u200Bb", "a[U+200B]b"],
+    ["abc\u202Edef", "abc[U+202E]def"],
+    ["hi\u{E0068}", "hi[U+E0068]"],
+    ["a\u{E0100}", "a[U+E0100]"],
+    ["\u3164", "[U+3164]"],
+  ])("reveals %j", (input, expected) => {
+    expect(contentFromText(input).text).toBe(expected);
+  });
+
+  test("leaves emoji sequences and ordinary text alone", () => {
+    const value = "café 👨‍👩‍👧 ❤️ 🏴󠁧󠁢󠁳󠁣󠁴󠁿\ttab";
+    expect(contentFromText(value).text).toBe(value);
+  });
+});
