@@ -34,6 +34,8 @@ function slackError(error: unknown, code: string) {
   );
 }
 
+const commandName = (name: string) => new RegExp(`^/(?:(?:.*-)?dev-)?${name}$`);
+
 export function registerHandlers(app: App, db: Database, config: Config) {
   registerDmHandlers(app, db, config);
   const cleared = () => ({
@@ -114,7 +116,7 @@ export function registerHandlers(app: App, db: Database, config: Config) {
     return true;
   }
 
-  app.command("/owl-self-reject", async ({ ack, command, client, respond }) => {
+  app.command(commandName("owl-self-reject"), async ({ ack, command, client, respond }) => {
     await ack();
     const s = command.text.trim();
     const id = Number(s);
@@ -165,7 +167,7 @@ export function registerHandlers(app: App, db: Database, config: Config) {
     await withdraw(id, body.user.id, key, client);
   });
 
-  app.command("/owl-revive", async ({ ack, command, client, respond }) => {
+  app.command(commandName("owl-revive"), async ({ ack, command, client, respond }) => {
     await ack();
     if (command.channel_id !== config.channels.review) {
       await respond({
@@ -310,7 +312,7 @@ export function registerHandlers(app: App, db: Database, config: Config) {
       }
     }
   });
-  app.command("/owl", async ({ ack, command, client, respond }) => {
+  app.command(commandName("owl"), async ({ ack, command, client, respond }) => {
     await ack();
     try {
       await client.views.open({

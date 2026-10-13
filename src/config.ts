@@ -19,6 +19,7 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env) {
     token: required("SLACK_BOT_TOKEN"),
     signingSecret: required("SLACK_SIGNING_SECRET"),
     pepper: readPepper(env),
+    appToken: env.SLACK_APP_TOKEN?.trim() || undefined,
     channels: {
       post: required("POST_CHANNEL"),
       meta: required("META_CHANNEL"),

@@ -74,7 +74,7 @@ export function createApp(
   });
   const app = new App({
     token: config.token,
-    receiver,
+    ...(config.appToken ? { socketMode: true, appToken: config.appToken } : { receiver }),
     deferInitialization: true,
     convoStore: false,
     clientOptions: {

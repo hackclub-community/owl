@@ -11,6 +11,7 @@ const config: Config = {
   token: "unused",
   signingSecret: "test-signing-secret",
   pepper: "testy-test-pepper-pls-be-long-enough",
+  appToken: undefined,
   channels: { post: "CPOST", meta: "CMETA", review: "CREVIEW", log: "CLOG" },
   port: 8080,
   poolSize: 1,
