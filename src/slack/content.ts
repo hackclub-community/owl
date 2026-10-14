@@ -238,6 +238,81 @@ export function contentFromBlocks(value: unknown): Content {
   return { block, text };
 }
 
+type Style = NonNullable<RichTextText["style"]>;
+const MARKS = { "*": "bold", _: "italic", "~": "strike", "`": "code" } as const;
+const word = (char: string | undefined) => char !== undefined && /[\p{L}\p{N}]/u.test(char);
+const space = (char: string | undefined) => char === undefined || /\s/u.test(char);
+
+function closing(text: string, mark: string, from: number): number {
+  for (let index = from; index < text.length; index++) {
+    if (text[index] === "\n") return -1;
+    if (
+      text.startsWith(mark, index) &&
+      !space(text[index - 1]) &&
+      !word(text[index + mark.length]) &&
+      text[index + mark.length] !== mark[0]
+    )
+      return index;
+  }
+  return -1;
+}
+
+function markdownText(text: string, style?: Style): RichTextText[] {
+  const result: RichTextText[] = [];
+  const append = (value: string, format = style) => {
+    const last = result.at(-1);
+    if (last && JSON.stringify(last.style) === JSON.stringify(format)) last.text += value;
+    else if (value)
+      result.push({ type: "text", text: value, ...(format ? { style: format } : {}) });
+  };
+  let cursor = 0;
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index]!;
+    if (!(char in MARKS) || word(text[index - 1]) || text[index - 1] === char) continue;
+    const mark = char !== "`" && text[index + 1] === char ? char.repeat(2) : char;
+    const start = index + mark.length;
+    if (space(text[start]) || text[start] === char) continue;
+    const end = closing(text, mark, start + 1);
+    if (end < 0) continue;
+    append(text.slice(cursor, index));
+    const format: Style = { ...style, [MARKS[char as keyof typeof MARKS]]: true };
+    const inner = text.slice(start, end);
+    if (char === "`") append(inner, format);
+    else for (const element of markdownText(inner, format)) append(element.text, element.style);
+    index = end + mark.length - 1;
+    cursor = end + mark.length;
+  }
+  append(text.slice(cursor));
+  return result;
+}
+
+function markdownSection(element: RichTextBlockElement): RichTextBlockElement {
+  switch (element.type) {
+    case "rich_text_preformatted":
+      return element;
+    case "rich_text_list":
+      return {
+        ...element,
+        elements: element.elements.map((item) => markdownSection(item) as typeof item),
+      };
+    default:
+      return {
+        ...element,
+        elements: element.elements.flatMap((inline) =>
+          inline.type === "text" && !inline.style?.code
+            ? markdownText(inline.text, inline.style)
+            : [inline],
+        ),
+      } as RichTextBlockElement;
+  }
+}
+
+// Applies Slack mrkdwn-style inline formatting (*bold*, _italic_, ~strike~, `code`) typed as literal text.
+export function contentFromMarkdown(value: unknown): Content {
+  const { block } = contentFromBlocks(value);
+  return contentFromBlocks({ ...block, elements: block.elements.map(markdownSection) });
+}
+
 const decode = (text: string) =>
   text.replace(
     /&(?:amp|lt|gt);/g,
@@ -282,7 +357,7 @@ export function contentFromText(text: string): Content {
     cursor = match.index + raw.length;
   }
   append(decode(text.slice(cursor)));
-  return contentFromBlocks({
+  return contentFromMarkdown({
     type: "rich_text",
     elements: [{ type: "rich_text_section", elements }],
   });
@@ -291,7 +366,7 @@ export function contentFromText(text: string): Content {
 export function inputContent(state: unknown): Content {
   const input = object(state);
   if (input.rich_text_value !== undefined && input.rich_text_value !== null)
-    return contentFromBlocks(input.rich_text_value);
+    return contentFromMarkdown(input.rich_text_value);
   return contentFromText(string(input.value));
 }
 

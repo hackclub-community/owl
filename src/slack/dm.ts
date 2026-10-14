@@ -6,7 +6,13 @@ import type { Config } from "../config.js";
 import type { Database } from "../db/client.js";
 import { confessions } from "../db/schema.js";
 import { authorCredential, matchesHash, newReplyKey, replyKeyCredential } from "./security.js";
-import { contentFromBlocks, contentFromText, MAX_TEXT, type Content } from "./content.js";
+import {
+  contentFromBlocks,
+  contentFromMarkdown,
+  contentFromText,
+  MAX_TEXT,
+  type Content,
+} from "./content.js";
 import { confirmationView, noticeView, reviewBlocks } from "./views.js";
 
 const plain = (text: string) => ({ type: "plain_text" as const, text });
@@ -89,7 +95,7 @@ export function registerDmHandlers(app: App, db: Database, config: Config) {
     try {
       content =
         "blocks" in event && event.blocks !== undefined
-          ? contentFromBlocks(event.blocks)
+          ? contentFromMarkdown(event.blocks)
           : contentFromText(text);
     } catch {
       await client.chat.postMessage({

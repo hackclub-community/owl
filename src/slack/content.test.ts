@@ -4,6 +4,7 @@ import type {
   RichTextBlockElement,
   RichTextElement,
   RichTextSection,
+  RichTextText,
 } from "@slack/web-api";
 import {
   MAX_CONTENT_BYTES,
@@ -11,6 +12,7 @@ import {
   MAX_TEXT,
   contentBlocks,
   contentFromBlocks,
+  contentFromMarkdown,
   contentFromText,
   inputContent,
   storedContent,
@@ -448,5 +450,89 @@ describe("hidden characters", () => {
   test("leaves emoji sequences and ordinary text alone", () => {
     const value = "café 👨‍👩‍👧 ❤️ 🏴󠁧󠁢󠁳󠁣󠁴󠁿\ttab";
     expect(contentFromText(value).text).toBe(value);
+  });
+});
+
+describe("markdown formatting", () => {
+  const styled = (value: string, style: RichTextText["style"]): RichTextText => ({
+    ...text(value),
+    style,
+  });
+
+  test("converts Slack-style inline markers into rich-text styles", () => {
+    expect(contentFromText("a *bold* _it_ ~gone~ `x_y_z` **two** __too__ ~~old~~").block).toEqual(
+      inlines(
+        text("a "),
+        styled("bold", { bold: true }),
+        text(" "),
+        styled("it", { italic: true }),
+        text(" "),
+        styled("gone", { strike: true }),
+        text(" "),
+        styled("x_y_z", { code: true }),
+        text(" "),
+        styled("two", { bold: true }),
+        text(" "),
+        styled("too", { italic: true }),
+        text(" "),
+        styled("old", { strike: true }),
+      ),
+    );
+    expect(contentFromText("*bold*").text).toBe("bold");
+  });
+
+  test("nests markers and keeps punctuation next to them", () => {
+    expect(
+      contentFromText("*I quit, so this covers the _first half of the guide._* (_really_),").block,
+    ).toEqual(
+      inlines(
+        styled("I quit, so this covers the ", { bold: true }),
+        styled("first half of the guide.", { bold: true, italic: true }),
+        text(" ("),
+        styled("really", { italic: true }),
+        text("),"),
+      ),
+    );
+  });
+
+  test("leaves markers inside words, around spaces, across lines or unclosed alone", () => {
+    for (const value of [
+      "snake_case_name",
+      "2*3*4",
+      "bothering me*.*",
+      "a * b * c",
+      "_ spaced _",
+      "*open\nclose*",
+      "**",
+      "*unclosed",
+      "file_name_",
+    ])
+      expect(contentFromText(value).block).toEqual(inlines(text(value)));
+  });
+
+  test("formats rich-text and DM input but not code or preformatted text", () => {
+    const block: RichTextBlock = rich(
+      section([text("_it_ "), styled("*code*", { code: true }), styled(" *b*", { italic: true })]),
+      { type: "rich_text_preformatted", elements: [text("*pre*")] },
+      { type: "rich_text_list", style: "bullet", elements: [section([text("~s~")])] },
+    );
+    const expected: RichTextBlock = rich(
+      section([
+        styled("it", { italic: true }),
+        text(" "),
+        styled("*code*", { code: true }),
+        styled(" ", { italic: true }),
+        styled("b", { italic: true, bold: true }),
+      ]),
+      { type: "rich_text_preformatted", elements: [text("*pre*")] },
+      {
+        type: "rich_text_list",
+        style: "bullet",
+        elements: [section([styled("s", { strike: true })])],
+      },
+    );
+    expect(inputContent({ rich_text_value: block }).block).toEqual(expected);
+    expect(contentFromMarkdown([block]).block).toEqual(expected);
+    expect(contentFromBlocks(block).block).toEqual(block);
   });
 });
