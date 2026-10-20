@@ -1,9 +1,12 @@
-_metadata:
-  major_version: 2
-
 display_information:
-  name: owl
+  name: Owl
   description: Submit confessions to me anonymously
+  long_description:
+    "a simple Slack bot for anonymous confessions, replies, and reactions. built to be fast, secure, and not fancy. it should stand the test of time, and not be a burden to maintain.\r
+
+    \r
+
+    Open source at https://github.com/hackclub-community/owl"
   background_color: "#1a49d6"
 
 features:
@@ -12,23 +15,8 @@ features:
     messages_tab_enabled: true
     messages_tab_read_only_enabled: false
   bot_user:
-    display_name: owl
-    always_online: false
-  slash_commands:
-    - command: /owl
-      url: https://prox3.3kh0.dev/slack/events
-      description: Submit an anonymous confession
-      usage_hint: "[message]"
-      should_escape: true
-    - command: /owl-self-reject
-      url: https://prox3.3kh0.dev/slack/events
-      description: Withdraw your own confession
-      usage_hint: "<id>"
-      should_escape: false
-    - command: /owl-revive
-      url: https://prox3.3kh0.dev/slack/events
-      description: Recover pending confessions
-      should_escape: false
+    display_name: Owl
+    always_online: true
   shortcuts:
     - name: Reply anonymously
       type: message
@@ -42,6 +30,21 @@ features:
       type: message
       callback_id: suspend_replies
       description: (Reviewers only) Suspend anon replies, delete this reply and following ones
+  slash_commands:
+    - command: /owl
+      description: Submit an anonymous confession
+      should_escape: true
+      url: https://prox3.3kh0.dev/slack/events
+      usage_hint: "[message]"
+    - command: /owl-self-reject
+      description: Withdraw your own confession
+      should_escape: false
+      url: https://prox3.3kh0.dev/slack/events
+      usage_hint: <id>
+    - command: /owl-revive
+      description: Recover pending confessions
+      should_escape: false
+      url: https://prox3.3kh0.dev/slack/events
 
 oauth_config:
   scopes:
@@ -54,16 +57,19 @@ oauth_config:
       - groups:read
       - channels:history
       - groups:history
+  pkce_enabled: false
 
 settings:
   event_subscriptions:
-    request_url: https://prox3.3kh0.dev/slack/events
     bot_events:
       - message.im
+    request_url: https://prox3.3kh0.dev/slack/events
   interactivity:
     is_enabled: true
-    request_url: https://prox3.3kh0.dev/slack/events
     message_menu_options_url: https://prox3.3kh0.dev/slack/events
-  socket_mode_enabled: false
-  token_rotation_enabled: false
+    request_url: https://prox3.3kh0.dev/slack/events
   org_deploy_enabled: true
+  socket_mode_enabled: false
+  is_mcp_enabled: false
+  token_rotation_enabled: false
+  app_level_token_rotation_enabled: false
