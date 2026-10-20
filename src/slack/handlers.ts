@@ -21,8 +21,11 @@ import {
   MAX_TEXT,
   postView,
   reactionView,
+  noticeView,
+  removedRepliesMessages,
   replyView,
   reviewBlocks,
+  suspendRepliesView,
   withdrawView,
 } from "./views.js";
 function slackError(error: unknown, code: string) {
@@ -725,6 +728,13 @@ export function registerHandlers(app: App, db: Database, config: Config) {
       });
       return;
     }
+    if (confession?.repliesLockedAt) {
+      await ack({
+        response_action: "errors",
+        errors: { text: "Anonymous replies to this post have been suspended." },
+      });
+      return;
+    }
     if (!confession || !(await ownsPost(confession, body.user.id, key, config.pepper))) {
       await ack({
         response_action: "errors",
@@ -759,6 +769,7 @@ export function registerHandlers(app: App, db: Database, config: Config) {
               eq(confessions.id, confession.id),
               eq(confessions.status, "accepted"),
               eq(confessions.postTs, confession.postTs!),
+              isNull(confessions.repliesLockedAt),
             ),
           )
           .for("share");
@@ -776,5 +787,149 @@ export function registerHandlers(app: App, db: Database, config: Config) {
         text: "Your anonymous reply could not be confirmed. Check the thread before trying again.",
       });
     }
+  });
+
+  async function isReviewer(client: WebClient, userId: string) {
+    let cursor: string | undefined;
+    do {
+      const page = await client.conversations.members({
+        channel: config.channels.review,
+        limit: 1000,
+        cursor,
+      });
+      if (page.members?.includes(userId)) return true;
+      cursor = page.response_metadata?.next_cursor || undefined;
+    } while (cursor);
+    return false;
+  }
+  async function suspendTargets(
+    post: typeof confessions.$inferSelect,
+    targetTs: string,
+    tx: Pick<Database, "select"> = db,
+  ) {
+    const rows = await tx
+      .select({ ts: replies.ts })
+      .from(replies)
+      .where(eq(replies.confessionId, post.id));
+    if (!rows.some((row) => row.ts === targetTs)) return [];
+    return rows.map((row) => row.ts).filter((ts) => ts >= targetTs);
+  }
+  async function threadContents(client: WebClient, channel: string, ts: string) {
+    const contents = new Map<string, Content>();
+    let cursor: string | undefined;
+    do {
+      const page = await client.conversations.replies({ channel, ts, limit: 200, cursor });
+      for (const message of page.messages ?? []) {
+        try {
+          contents.set(message.ts!, storedContent(message.text ?? "", message.blocks ?? null));
+        } catch {}
+      }
+      cursor = page.response_metadata?.next_cursor || undefined;
+    } while (cursor);
+    return contents;
+  }
+
+  app.shortcut<MessageShortcut>("suspend_replies", async ({ ack, shortcut, client }) => {
+    await ack();
+    const notice = (text: string) =>
+      client.views.open({
+        trigger_id: shortcut.trigger_id,
+        view: noticeView("Suspend anon replies", text),
+      });
+    const ts = shortcut.message.thread_ts ?? shortcut.message.ts;
+    const [reviewer, post] = await Promise.all([
+      isReviewer(client, shortcut.user.id),
+      published(shortcut.channel.id, ts),
+    ]);
+    if (!reviewer) {
+      await notice("Only people in the review channel can suspend anonymous replies.");
+      return;
+    }
+    if (!post) {
+      await notice("Use this on a published confession or a message in its thread.");
+      return;
+    }
+    const targets = await suspendTargets(post, shortcut.message.ts);
+    if (post.repliesLockedAt && !targets.length) {
+      await notice(`Anonymous replies to post #${post.id} are already suspended.`);
+      return;
+    }
+    await client.views.open({
+      trigger_id: shortcut.trigger_id,
+      view: suspendRepliesView(
+        post.id,
+        shortcut.channel.id,
+        ts,
+        shortcut.message.ts,
+        targets.length,
+        !!post.repliesLockedAt,
+      ),
+    });
+  });
+
+  app.view("suspend_replies_view", async ({ ack, body, view, client }) => {
+    const context: { channel: string; ts: string; targetTs: string } = JSON.parse(
+      view.private_metadata,
+    );
+    if (!(await isReviewer(client, body.user.id))) {
+      await ack({
+        response_action: "update",
+        view: noticeView(
+          "Suspend anon replies",
+          "Only people in the review channel can suspend anonymous replies.",
+        ),
+      });
+      return;
+    }
+    await ack();
+    const post = await published(context.channel, context.ts);
+    if (!post) return;
+    const targets = await suspendTargets(post, context.targetTs);
+    const contents = targets.length
+      ? await threadContents(client, post.postChannel, post.postTs!)
+      : new Map<string, Content>();
+    const fresh = !post.repliesLockedAt;
+    if (fresh) {
+      await db
+        .update(confessions)
+        .set({ repliesLockedAt: new Date() })
+        .where(eq(confessions.id, post.id));
+      const notice = "OP has been suspended from further anonymous replies on this post.";
+      await client.chat.postMessage({
+        channel: post.postChannel,
+        thread_ts: post.postTs!,
+        text: notice,
+        blocks: [{ type: "context", elements: [{ type: "plain_text", text: notice }] }],
+        mrkdwn: false,
+        parse: "none",
+        link_names: false,
+      });
+    }
+    if (fresh || targets.length) {
+      const removed = `${targets.length} anonymous ${targets.length === 1 ? "reply" : "replies"}`;
+      const heading = fresh
+        ? `<@${body.user.id}> suspended anonymous replies on post #${post.id}${targets.length ? ` and removed ${removed}` : ""}`
+        : `<@${body.user.id}> removed ${removed} on post #${post.id}`;
+      const records = targets.map((ts) => ({ ts, content: contents.get(ts) ?? null }));
+      for (const message of removedRepliesMessages(heading, records))
+        await client.chat.postMessage({
+          channel: config.channels.review,
+          ...(post.reviewTs ? { thread_ts: post.reviewTs } : {}),
+          ...message,
+          unfurl_links: false,
+          unfurl_media: false,
+        });
+    }
+    for (const ts of targets) {
+      try {
+        await client.chat.delete({ channel: post.postChannel, ts });
+      } catch (error) {
+        if (!slackError(error, "message_not_found")) throw error;
+      }
+    }
+    if (targets.length)
+      await db
+        .delete(replies)
+        .where(and(eq(replies.confessionId, post.id), inArray(replies.ts, targets)));
   });
 }

@@ -1,6 +1,12 @@
 import type { ModalView, KnownBlock, InputBlock } from "@slack/web-api";
 
-import { contentBlocks, contentFromText, storedContent, MAX_TEXT } from "./content.js";
+import {
+  contentBlocks,
+  contentFromText,
+  storedContent,
+  MAX_TEXT,
+  type Content,
+} from "./content.js";
 export { MAX_TEXT } from "./content.js";
 export const escapeSlackText = (text: string) =>
   text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
@@ -168,6 +174,76 @@ export function replyView(channel: string, ts: string): ModalView {
     close: plain("Cancel"),
     blocks: [messageInput("Your reply"), key()],
   };
+}
+export function suspendRepliesView(
+  id: number,
+  channel: string,
+  ts: string,
+  targetTs: string,
+  count: number,
+  locked: boolean,
+): ModalView {
+  const blocking = locked
+    ? `Anonymous replies to post #${id} are already suspended`
+    : `Blocks OP from replying anonymously to post #${id} again, posts a notice in the thread`;
+  const replies = `${count} anonymous ${count === 1 ? "reply" : "replies"}`;
+  const deleting = count
+    ? `Deletes ${replies}`
+    : "Deletes nothing (use the action on the first offending reply to delete it)";
+  return {
+    type: "modal",
+    callback_id: "suspend_replies_view",
+    title: plain("Suspend anon replies"),
+    private_metadata: JSON.stringify({ channel, ts, targetTs }),
+    submit: plain(count ? (locked ? `Delete ${count}` : `Delete ${count} and suspend`) : "Suspend"),
+    close: plain("Cancel"),
+    blocks: [
+      { type: "section", text: plain(blocking) },
+      { type: "section", text: plain(deleting) },
+    ],
+  };
+}
+export function removedRepliesMessages(
+  heading: string,
+  removed: { ts: string; content: Content | null }[],
+): { text: string; blocks: KnownBlock[] }[] {
+  const messages: { blocks: KnownBlock[]; length: number }[] = [
+    { blocks: [{ type: "section", text: { type: "mrkdwn", text: heading } }], length: 0 },
+  ];
+  removed.forEach(({ ts, content }, index) => {
+    const seconds = Math.floor(Number(ts));
+    const blocks: KnownBlock[] = [
+      {
+        type: "context",
+        elements: [
+          {
+            type: "mrkdwn",
+            text: `Deleted reply ${index + 1}/${removed.length} (<!date^${seconds}^{date_short_pretty} at {time}|${new Date(seconds * 1000).toISOString()}>)`,
+          },
+        ],
+      },
+      ...(content
+        ? contentBlocks(content)
+        : [
+            {
+              type: "context" as const,
+              elements: [plain("Already gone from Slack?")],
+            },
+          ]),
+    ];
+    const length = content?.text.length ?? 0;
+    const current = messages.at(-1)!;
+    if (current.blocks.length + blocks.length > 50 || current.length + length > MAX_TEXT)
+      messages.push({ blocks, length });
+    else {
+      current.blocks.push(...blocks);
+      current.length += length;
+    }
+  });
+  return messages.map(({ blocks }, index) => ({
+    text: index ? `${heading} (continued)` : heading,
+    blocks,
+  }));
 }
 export function approveTwView(id: number, reviewTs: string): ModalView {
   return {

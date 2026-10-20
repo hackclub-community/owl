@@ -1,0 +1,1 @@
+ALTER TABLE "confessions" ADD COLUMN "replies_locked_at" timestamp with time zone;

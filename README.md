@@ -19,13 +19,14 @@ we also use [oxc](https://oxc.rs/) tooling for formatting and linting, so pls ru
 
 ## cmds
 
-| what it is              | what it do                                            |
-| ----------------------- | ----------------------------------------------------- |
-| `/owl [message]`        | open the confession form                              |
-| `/owl-self-reject <id>` | //undo your confession when provided a id             |
-| `/owl-revive`           | useful for reviewers to check the backlog when needed |
-| reply anon              | reply as the OP                                       |
-| react anon              | react as the OP                                       |
+| what it is              | what it do                                                |
+| ----------------------- | --------------------------------------------------------- |
+| `/owl [message]`        | open the confession form                                  |
+| `/owl-self-reject <id>` | //undo your confession when provided a id                 |
+| `/owl-revive`           | useful for reviewers to check the backlog when needed     |
+| reply anon              | reply as the OP                                           |
+| react anon              | react as the OP                                           |
+| suspend anon replies    | delete anon replies from the selected one on, suspend new |
 
 the submission form lets you choose a salted account hash or a generated private reply key. neither mode stores your raw Slack user ID. the private key mode needs both the key and the original account for replies, reactions, and withdrawal. you gotta save the key when it is shown, if it is lost, then its gg.
 

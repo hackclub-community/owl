@@ -38,6 +38,10 @@ features:
       type: message
       callback_id: react_anon
       description: React anonymously
+    - name: Suspend anon replies
+      type: message
+      callback_id: suspend_replies
+      description: (Reviewers only) Suspend anon replies, delete this reply and following ones
 
 oauth_config:
   scopes:
@@ -46,6 +50,10 @@ oauth_config:
       - chat:write
       - reactions:write
       - im:history
+      - channels:read
+      - groups:read
+      - channels:history
+      - groups:history
 
 settings:
   event_subscriptions:

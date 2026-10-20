@@ -38,6 +38,7 @@ export const confessions = pgTable(
     warning: text("warning"),
     contentTs: text("content_ts"),
     status: confessionStatus("status").notNull().default("pending"),
+    repliesLockedAt: timestamp("replies_locked_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

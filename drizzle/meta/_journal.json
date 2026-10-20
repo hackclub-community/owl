@@ -64,6 +64,13 @@
       "when": 1791129403415,
       "tag": "0008_reply_key_hash_version",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792434694634,
+      "tag": "0009_replies_locked",
+      "breakpoints": true
     }
   ]
 }
