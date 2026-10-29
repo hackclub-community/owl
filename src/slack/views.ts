@@ -7,6 +7,7 @@ import {
   MAX_TEXT,
   type Content,
 } from "./content.js";
+import { DEMO_NOTICE } from "./demo.js";
 export { MAX_TEXT } from "./content.js";
 export const escapeSlackText = (text: string) =>
   text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
@@ -62,7 +63,7 @@ const confirmDialog = (
   deny: plain(denyText),
   style: btnStyle,
 });
-export function postView(initialText = ""): ModalView {
+export function postView(initialText = "", demo = false): ModalView {
   return {
     type: "modal",
     callback_id: "anon_post_view",
@@ -70,6 +71,7 @@ export function postView(initialText = ""): ModalView {
     submit: plain("Submit"),
     close: plain("Cancel"),
     blocks: [
+      ...(demo ? [{ type: "context" as const, elements: [plain(DEMO_NOTICE)] }] : []),
       messageInput("Your message", initialText),
       {
         type: "input",

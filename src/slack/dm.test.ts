@@ -13,6 +13,7 @@ const config: Config = {
   pepper: "testy-test-pepper-pls-be-long-enough",
   appToken: undefined,
   channels: { post: "CPOST", meta: "CMETA", review: "CREVIEW", log: "CLOG" },
+  demo: false,
   port: 8080,
   poolSize: 1,
 };
@@ -29,7 +30,7 @@ type Submission = {
   replyKeyHashVersion?: number;
 };
 
-function harness(initialText = "A confession") {
+function harness(initialText = "A confession", demo = false) {
   const events = new Map<string, Handler>();
   const actions = new Map<string, Handler>();
   const app = {
@@ -114,14 +115,26 @@ function harness(initialText = "A confession") {
   const viewUpdate = mock(async (_args: Record<string, unknown>) => ({ ok: true }));
   const deleteMessage = mock(async (_args: Record<string, unknown>) => ({ ok: true }));
   const addReaction = mock(async (_args: Record<string, unknown>) => ({ ok: true }));
+  const usersInfo = mock(async (_args: Record<string, unknown>) => ({
+    ok: true,
+    user: { profile: { display_name: "author" } },
+  }));
   const client = {
     chat: { postMessage, update, delete: deleteMessage },
     reactions: { add: addReaction },
     views: { open, update: viewUpdate },
+    users: { info: usersInfo },
   };
   const ack = mock(async () => {});
-  registerDmHandlers(app as unknown as App, db as unknown as Database, config);
-  const prompt = dmPrompt(initialText, "UAUTHOR", "DAUTHOR", "100.000001", config.signingSecret);
+  registerDmHandlers(app as unknown as App, db as unknown as Database, { ...config, demo });
+  const prompt = dmPrompt(
+    initialText,
+    "UAUTHOR",
+    "DAUTHOR",
+    "100.000001",
+    config.signingSecret,
+    demo,
+  );
   const buttonBlock = prompt[3];
   if (buttonBlock?.type !== "actions") throw new Error("Missing submit actions");
   const button = buttonBlock.elements[0];
@@ -321,6 +334,23 @@ describe("DM confirmation", () => {
       }),
     );
     expect(post.reviewTs).toBe("200.000001");
+  });
+
+  test("never looks up or names the author outside a demo", async () => {
+    const h = harness();
+    await h.submit();
+    expect(h.client.users.info).not.toHaveBeenCalled();
+    expect(JSON.stringify(h.getPost())).not.toContain("demo");
+    expect(JSON.stringify(h.body.message.blocks)).not.toContain("NOT anonymous");
+  });
+
+  test("a demo names the author on the saved post and warns before submitting", async () => {
+    const h = harness("A confession", true);
+    expect(JSON.stringify(h.body.message.blocks[0])).toContain("NOT anonymous");
+    await h.submit();
+    const post = h.getPost()!;
+    expect(post.text).toBe("from author (demo)\nA confession");
+    expect(JSON.stringify(post.content)).toContain("https://app.slack.com/team/UAUTHOR");
   });
 
   const keyMode = () => {

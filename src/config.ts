@@ -26,6 +26,8 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env) {
       review: required("REVIEW_CHANNEL"),
       log: required("LOG_CHANNEL"),
     },
+    // demo instances put the author's name on everything, see slack/demo.ts
+    demo: env.OWL_DEMO?.trim() === "true",
     port: integer("PORT", 8080),
     poolSize: integer("DB_POOL_SIZE", 10),
   };

@@ -13,6 +13,7 @@ import {
   MAX_TEXT,
   type Content,
 } from "./content.js";
+import { attributedTo, DEMO_NOTICE } from "./demo.js";
 import { confirmationView, noticeView, reviewBlocks } from "./views.js";
 
 const plain = (text: string) => ({ type: "plain_text" as const, text });
@@ -27,6 +28,7 @@ export function dmPrompt(
   channel: string,
   ts: string,
   secret: string,
+  demo = false,
 ): KnownBlock[] {
   const content =
     typeof value === "string" ? contentFromText(value) : contentFromBlocks(value.block);
@@ -37,7 +39,12 @@ export function dmPrompt(
     JSON.stringify(content.block),
   ]);
   return [
-    { type: "section", text: plain("Do you want to submit this confession for review?") },
+    {
+      type: "section",
+      text: plain(
+        `Do you want to submit this confession for review?${demo ? `\n\n${DEMO_NOTICE}` : ""}`,
+      ),
+    },
     content.block,
     {
       type: "actions",
@@ -109,7 +116,14 @@ export function registerDmHandlers(app: App, db: Database, config: Config) {
       channel: event.channel,
       thread_ts,
       text: "Do you want to submit this confession for review?",
-      blocks: dmPrompt(content, event.user, event.channel, event.ts, config.signingSecret),
+      blocks: dmPrompt(
+        content,
+        event.user,
+        event.channel,
+        event.ts,
+        config.signingSecret,
+        config.demo,
+      ),
       unfurl_links: false,
       unfurl_media: false,
     });
@@ -229,6 +243,7 @@ export function registerDmHandlers(app: App, db: Database, config: Config) {
       let post;
       let inserted = false;
       try {
+        if (config.demo) content = await attributedTo(client, body.user.id, content);
         [post] = await db
           .insert(confessions)
           .values({

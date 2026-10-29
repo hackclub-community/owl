@@ -6,6 +6,7 @@ import type { Database } from "../db/client.js";
 import { confessions, replies } from "../db/schema.js";
 import { authorCredential, newReplyKey, ownsPost, replyKeyCredential } from "./security.js";
 import { registerDmHandlers } from "./dm.js";
+import { attributedTo } from "./demo.js";
 import {
   contentBlocks,
   contentFromText,
@@ -37,7 +38,7 @@ function slackError(error: unknown, code: string) {
   );
 }
 
-const commandName = (name: string) => new RegExp(`^/(?:(?:.*-)?dev-)?${name}$`);
+const commandName = (name: string) => new RegExp(`^/(?:(?:.*-)?(?:dev|demo)-)?${name}$`);
 
 export function registerHandlers(app: App, db: Database, config: Config) {
   registerDmHandlers(app, db, config);
@@ -320,7 +321,7 @@ export function registerHandlers(app: App, db: Database, config: Config) {
     try {
       await client.views.open({
         trigger_id: command.trigger_id,
-        view: postView(command.text.trim()),
+        view: postView(command.text.trim(), config.demo),
       });
     } catch (error) {
       const data =
@@ -342,6 +343,7 @@ export function registerHandlers(app: App, db: Database, config: Config) {
     let content: Content;
     try {
       content = inputContent(view.state.values.text?.text);
+      if (config.demo) content = await attributedTo(client, body.user.id, content);
     } catch {
       await ack({
         response_action: "errors",
@@ -697,6 +699,7 @@ export function registerHandlers(app: App, db: Database, config: Config) {
     let content: Content;
     try {
       content = inputContent(view.state.values.text?.text);
+      if (config.demo) content = await attributedTo(client, body.user.id, content);
     } catch {
       await ack({
         response_action: "errors",
