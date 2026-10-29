@@ -13,8 +13,8 @@ import {
   MAX_TEXT,
   type Content,
 } from "./content.js";
-import { attributedTo, DEMO_NOTICE } from "./demo.js";
-import { confirmationView, noticeView, reviewBlocks } from "./views.js";
+import { attributedTo } from "./demo.js";
+import { confirmationView, DEMO_NOTICE, noticeView, reviewBlocks } from "./views.js";
 
 const plain = (text: string) => ({ type: "plain_text" as const, text });
 const digest = (secret: string, purpose: string, parts: string[]) =>

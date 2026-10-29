@@ -349,7 +349,7 @@ describe("DM confirmation", () => {
     expect(JSON.stringify(h.body.message.blocks[0])).toContain("NOT anonymous");
     await h.submit();
     const post = h.getPost()!;
-    expect(post.text).toBe("from author (demo)\nA confession");
+    expect(post.text).toBe("A confession\n— author");
     expect(JSON.stringify(post.content)).toContain("https://app.slack.com/team/UAUTHOR");
   });
 

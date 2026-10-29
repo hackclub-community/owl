@@ -7,8 +7,9 @@ import {
   MAX_TEXT,
   type Content,
 } from "./content.js";
-import { DEMO_NOTICE } from "./demo.js";
 export { MAX_TEXT } from "./content.js";
+export const DEMO_NOTICE =
+  "This is a demo of Owl, it is NOT anonymous. Your name is shown on everything you post.";
 export const escapeSlackText = (text: string) =>
   text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 export const MAX_MESSAGE_TEXT = 40_000;

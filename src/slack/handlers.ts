@@ -6,7 +6,7 @@ import type { Database } from "../db/client.js";
 import { confessions, replies } from "../db/schema.js";
 import { authorCredential, newReplyKey, ownsPost, replyKeyCredential } from "./security.js";
 import { registerDmHandlers } from "./dm.js";
-import { attributedTo } from "./demo.js";
+import { attributedTo, byline } from "./demo.js";
 import {
   contentBlocks,
   contentFromText,
@@ -94,6 +94,7 @@ export function registerHandlers(app: App, db: Database, config: Config) {
     if (!claimed) return false;
     await unpublish(claimed, client);
     await db.update(confessions).set(cleared()).where(eq(confessions.id, id));
+    const by = (await byline(client, userId, config.demo)) || " by its author";
     await Promise.all(
       claimed.reviewTs
         ? [
@@ -108,9 +109,7 @@ export function registerHandlers(app: App, db: Database, config: Config) {
                 ),
                 {
                   type: "context",
-                  elements: [
-                    { type: "plain_text", text: `Post #${id} self-rejected by its author` },
-                  ],
+                  elements: [{ type: "mrkdwn", text: `Post #${id} self-rejected${by}` }],
                 },
               ],
             }),
@@ -467,6 +466,7 @@ export function registerHandlers(app: App, db: Database, config: Config) {
         .where(eq(confessions.id, id));
     }
     const verdict = accepting ? "accepted" : "rejected";
+    const by = await byline(client, userId, config.demo);
     await db.transaction(async (tx) => {
       const [current] = await tx
         .select()
@@ -483,7 +483,7 @@ export function registerHandlers(app: App, db: Database, config: Config) {
       const logVerdict = accepting ? `approved to <#${current.postChannel}>` : "rejected";
       const log = await client.chat.postMessage({
         channel: config.channels.log,
-        text: `Confession *#${id}* was *${logVerdict}*`,
+        text: `Confession *#${id}* was *${logVerdict}*${by}`,
         mrkdwn: true,
         parse: "none",
         link_names: false,
@@ -678,7 +678,7 @@ export function registerHandlers(app: App, db: Database, config: Config) {
       }
       await client.chat.postMessage({
         channel: config.channels.log,
-        text: `Confession *#${id}* was *${undone}*`,
+        text: `Confession *#${id}* was *${undone}*${await byline(client, body.user.id, config.demo)}`,
         mrkdwn: true,
         parse: "none",
         link_names: false,

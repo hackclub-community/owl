@@ -1,36 +1,41 @@
 import type { WebClient } from "@slack/web-api";
 import { contentFromBlocks, type Content } from "./content.js";
+import { escapeSlackText } from "./views.js";
 
-export const DEMO_NOTICE =
-  "This is a demo of Owl, it is NOT anonymous. Your name is shown on everything you post.";
+const profile = (user: string) => `https://app.slack.com/team/${user}`;
+
+export async function nameOf(client: WebClient, user: string) {
+  try {
+    const { user: info } = await client.users.info({ user });
+    return info?.profile?.display_name || info?.real_name || user;
+  } catch {
+    return user;
+  }
+}
 
 export function attributed(content: Content, user: string, name: string): Content {
   return contentFromBlocks({
     ...content.block,
     elements: [
+      ...content.block.elements,
       {
         type: "rich_text_section",
         elements: [
-          { type: "text", text: "from " },
-          {
-            type: "link",
-            url: `https://app.slack.com/team/${user}`,
-            text: name,
-            style: { bold: true },
-          },
-          { type: "text", text: " (demo)", style: { italic: true } },
+          { type: "text", text: "— ", style: { italic: true } },
+          { type: "link", url: profile(user), text: name, style: { italic: true } },
         ],
       },
-      ...content.block.elements,
     ],
   });
 }
 
 export async function attributedTo(client: WebClient, user: string, content: Content) {
-  let name = user;
-  try {
-    const { user: info } = await client.users.info({ user });
-    name = info?.profile?.display_name || info?.real_name || user;
-  } catch {}
-  return attributed(content, user, name);
+  return attributed(content, user, await nameOf(client, user));
+}
+
+// " by <name>" for a log line in mrkdwn
+export async function byline(client: WebClient, user: string, demo: boolean) {
+  if (!demo) return "";
+  const name = escapeSlackText(await nameOf(client, user)).replaceAll("|", "¦");
+  return ` by <${profile(user)}|${name}>`;
 }
