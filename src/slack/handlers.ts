@@ -487,6 +487,8 @@ export function registerHandlers(app: App, db: Database, config: Config) {
         mrkdwn: true,
         parse: "none",
         link_names: false,
+        unfurl_links: false,
+        unfurl_media: false,
       });
       async function permalink(channel: string, ts?: string | null) {
         if (!ts) return undefined;
@@ -682,6 +684,8 @@ export function registerHandlers(app: App, db: Database, config: Config) {
         mrkdwn: true,
         parse: "none",
         link_names: false,
+        unfurl_links: false,
+        unfurl_media: false,
       });
     },
   );
